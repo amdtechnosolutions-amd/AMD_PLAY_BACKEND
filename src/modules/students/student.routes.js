@@ -1,0 +1,126 @@
+import { studentController } from './student.controller.js';
+import {
+  createStudentSchema,
+  queryStudentsSchema,
+  updateStudentSchema,
+  studentParamSchema,
+  uploadStudentFaceSchema,
+  markStudentAttendanceSchema,
+  getMyAttendanceSchema,
+  getMySiblingsSchema,
+} from './student.schema.js';
+import { requireTenantContext } from '../../middleware/tenant.middleware.js';
+
+export default async function studentRoutes(fastify) {
+  fastify.post('/students', {
+    schema: createStudentSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: studentController.createStudent.bind(studentController),
+  });
+
+  fastify.get('/students', {
+    schema: queryStudentsSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: studentController.listStudents.bind(studentController),
+  });
+
+  // Available dynamic skill levels
+  fastify.get('/students/skill-levels', {
+    schema: {
+      description: 'Get dynamic list of coaching skill levels from database for student onboarding dropdowns',
+      tags: ['Students Management', 'Skills & Levels Management'],
+      querystring: {
+        type: 'object',
+        properties: {
+          sportId: { type: 'string', description: 'Filter by sport ID (e.g. Badminton 6ad6bdead33a91a36c41ff5b)' },
+          search: { type: 'string', description: 'Search keyword' },
+        },
+      },
+    },
+    preHandler: [fastify.authenticateOptional],
+    handler: async (request) => {
+      const { skillService } = await import('../skills/skill.service.js');
+      const result = await skillService.list(request.query || {}, {}, request);
+      return {
+        success: true,
+        message: 'Skill levels retrieved successfully',
+        data: result.items,
+      };
+    },
+  });
+
+  // Logged-in Student personal attendance for Mobile App
+  fastify.get('/students/my/attendance', {
+    schema: getMyAttendanceSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: studentController.getMyAttendance.bind(studentController),
+  });
+
+  // Logged-in Student siblings under the same parent contact for Mobile App
+  fastify.get('/students/my/siblings', {
+    schema: getMySiblingsSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: studentController.getMySiblings.bind(studentController),
+  });
+
+  // Logged-in Student personal monthly fee invoices for Mobile App
+  fastify.get('/students/my/fees', {
+    schema: {
+      description: '[Roles: student] Get personal monthly coaching fee dues and payment receipts',
+      tags: ['Students Management', 'Finance & Monthly Fees'],
+      security: [{ bearerAuth: [] }],
+    },
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: studentController.getMyFees.bind(studentController),
+  });
+
+  // Coach batch attendance marking for Mobile App
+  fastify.post('/students/attendance/mark', {
+    schema: markStudentAttendanceSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: studentController.markAttendance.bind(studentController),
+  });
+
+  fastify.get('/students/:id', {
+    schema: studentParamSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: studentController.getStudentById.bind(studentController),
+  });
+
+  fastify.patch('/students/:id', {
+    schema: updateStudentSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: studentController.updateStudent.bind(studentController),
+  });
+
+  fastify.delete('/students/:id', {
+    schema: studentParamSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: studentController.deleteStudent.bind(studentController),
+  });
+
+  fastify.post('/students/:id/face', {
+    schema: uploadStudentFaceSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: studentController.uploadFace.bind(studentController),
+  });
+
+  fastify.get('/students/:id/attendance', {
+    schema: {
+      ...studentParamSchema,
+      description: '[Roles: tenant_admin, branch_manager, coach, student] Get detailed attendance history, percentage, and punch logs for a student',
+    },
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: studentController.getAttendance.bind(studentController),
+  });
+
+  fastify.get('/students/:id/fees', {
+    schema: {
+      ...studentParamSchema,
+      description: '[Roles: tenant_admin, branch_manager, coach, student] Get monthly coaching fee invoices and payment status for a student',
+    },
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: studentController.getFees.bind(studentController),
+  });
+}
+
