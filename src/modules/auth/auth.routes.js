@@ -4,6 +4,7 @@ import {
   loginSchema,
   superAdminLoginSchema,
   tenantLoginSchema,
+  coachLoginSchema,
   studentLoginSchema,
   switchStudentProfileSchema,
   memberLoginSchema,
@@ -30,6 +31,12 @@ export default async function authRoutes(fastify) {
   fastify.post('/auth/tenant/login', {
     schema: tenantLoginSchema,
     handler: authController.tenantLogin.bind(authController),
+  });
+
+  // Dedicated Coach / Trainer Login (Mobile App & Web)
+  fastify.post('/auth/coach/login', {
+    schema: coachLoginSchema,
+    handler: authController.coachLogin.bind(authController),
   });
 
   // Independent Student / Trainee Login (Mobile App & Web - Sibling Multi-Profile Aware)

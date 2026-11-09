@@ -64,6 +64,23 @@ export const tenantLoginSchema = {
   },
 };
 
+export const coachLoginSchema = {
+  description: '[Roles: coach] Dedicated Coach & Trainer Authentication by email, phone, or employee ID',
+  tags: ['Admin Management', 'Authentication', 'Coaching Management'],
+  body: {
+    type: 'object',
+    required: ['password'],
+    properties: {
+      email: { type: 'string', description: 'Coach registered email or identifier' },
+      identifier: { type: 'string', description: 'Coach email, mobile phone number, or employee ID' },
+      phone: { type: 'string', description: 'Coach registered mobile phone number' },
+      employeeNo: { type: 'string', description: 'Coach employee number (e.g. isacoch001)' },
+      password: { type: 'string', minLength: 1, description: 'Coach account password' },
+      tenantSlug: { type: 'string', description: 'Optional: Academy unique slug (e.g. inertia-sports-academy)' },
+    },
+  },
+};
+
 export const studentLoginSchema = {
   description: '[Roles: student] Dedicated Student / Trainee Login by regNo, employeeNo, phone, cardNo or email (No tenantSlug or studentId required)',
   tags: ['Authentication', 'Students Management'],

@@ -96,14 +96,57 @@ export class AuthService {
       query.role = role;
     }
 
-    let user = await User.findOne(query).select('+password');
+    const ROLE_PRIORITY = {
+      [ROLES.SUPER_ADMIN]: 1,
+      [ROLES.PLATFORM_ADMIN]: 2,
+      [ROLES.TENANT_ADMIN]: 3,
+      [ROLES.BRANCH_ADMIN]: 4,
+      [ROLES.MANAGER]: 5,
+      [ROLES.COACH]: 6,
+      trainer: 7,
+      [ROLES.STAFF]: 8,
+      receptionist: 9,
+      front_desk: 10,
+      accountant: 11,
+      [ROLES.MEMBER]: 12,
+      [ROLES.STUDENT]: 13,
+      [ROLES.CUSTOMER]: 14,
+    };
+
+    const sortByPriority = (docs) => {
+      return docs.sort((a, b) => {
+        const prioA = ROLE_PRIORITY[a.role] || 99;
+        const prioB = ROLE_PRIORITY[b.role] || 99;
+        return prioA - prioB;
+      });
+    };
+
+    let user = null;
+    if (role) {
+      user = await User.findOne(query).select('+password');
+    }
+
+    if (!user) {
+      const candidates = await User.find(query).select('+password');
+      if (candidates.length > 0) {
+        user = sortByPriority(candidates)[0];
+      }
+    }
+
     if (!user && role) {
       // Fallback without role filter
       delete query.role;
-      user = await User.findOne(query).select('+password');
+      const candidates = await User.find(query).select('+password');
+      if (candidates.length > 0) {
+        user = sortByPriority(candidates)[0];
+      }
     }
+
     if (!user && targetTenantId) {
-      user = await User.findOne({ $or: orConditions }).select('+password');
+      const candidates = await User.find({ $or: orConditions }).select('+password');
+      if (candidates.length > 0) {
+        user = sortByPriority(candidates)[0];
+      }
     }
 
     if (!user) {
@@ -324,6 +367,25 @@ export class AuthService {
         },
       },
     };
+  }
+
+  /**
+   * Dedicated Coach / Trainer Login (Mobile App & Web)
+   */
+  async coachLogin({ email, identifier, phone, employeeNo, password, tenantSlug }) {
+    const loginId = (email || identifier || phone || employeeNo || '').trim();
+    if (!loginId || !password) {
+      throw new ValidationError('Coach email, mobile phone number or employee ID and password are required');
+    }
+
+    return this.login({
+      email: loginId.includes('@') ? loginId : undefined,
+      phone: !loginId.includes('@') ? loginId : undefined,
+      identifier: loginId,
+      password,
+      tenantSlug,
+      role: ROLES.COACH,
+    });
   }
 
   /**

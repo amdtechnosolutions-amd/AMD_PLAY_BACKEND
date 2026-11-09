@@ -69,12 +69,22 @@ export class BookingService extends BaseService {
       const customerName = data.name || data.customer?.name || 'Player';
 
       if (customerPhone) {
+        const rawPhone = customerPhone.trim();
+        const digits = rawPhone.replace(/\D/g, '');
+        const phoneVariants = [rawPhone];
+        if (digits.length === 10) {
+          phoneVariants.push(digits, `+91${digits}`, `91${digits}`);
+        } else if (digits.length > 10 && digits.startsWith('91')) {
+          const ten = digits.slice(-10);
+          phoneVariants.push(ten, `+91${ten}`, `91${ten}`);
+        }
+
         user = await User.findOne({
           tenantId: resolvedTenantId,
-          phone: customerPhone.trim(),
+          phone: { $in: phoneVariants },
         });
         if (!user) {
-          user = await User.findOne({ phone: customerPhone.trim() });
+          user = await User.findOne({ phone: { $in: phoneVariants } });
         }
       }
 

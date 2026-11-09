@@ -46,6 +46,16 @@ export class AuthController {
     );
   }
 
+  async coachLogin(request, reply) {
+    const authResult = await this.authService.coachLogin(request.body);
+    return reply.status(200).send(
+      apiSuccess({
+        message: 'Coach login successful',
+        data: authResult,
+      })
+    );
+  }
+
   async studentLogin(request, reply) {
     const authResult = await this.authService.studentLogin(request.body);
     return reply.status(200).send(
