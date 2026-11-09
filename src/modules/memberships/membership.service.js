@@ -817,11 +817,21 @@ export class MembershipService extends BaseService {
       }
 
       const email = (data.email || `member_${Date.now()}@amdplay.local`).toLowerCase().trim();
+      const phoneOrVariants = [];
+      if (data.phone && data.phone.trim()) {
+        const cleanPhone = data.phone.trim();
+        const digits = cleanPhone.replace(/\D/g, '');
+        phoneOrVariants.push({ phone: cleanPhone });
+        if (digits.length === 10) {
+          phoneOrVariants.push({ phone: digits }, { phone: `+91${digits}` }, { phone: `91${digits}` });
+        }
+      }
+
       const existingUser = await userRepository.findOne({
         tenantId,
         $or: [
           { email },
-          ...(data.phone ? [{ phone: data.phone.trim() }] : []),
+          ...phoneOrVariants,
         ],
       });
 

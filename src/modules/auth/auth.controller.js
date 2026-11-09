@@ -1,5 +1,6 @@
 import { AuthService } from './auth.service.js';
 import { apiSuccess } from '../../utils/response.js';
+import { User } from '../users/user.model.js';
 
 export class AuthController {
   constructor(fastify) {
@@ -110,13 +111,25 @@ export class AuthController {
   }
 
   async getProfile(request, reply) {
+    let fullUser = null;
+    const uId = request.user?.id || request.user?.sub;
+    if (uId) {
+      try {
+        fullUser = await User.findById(uId).select('-password').lean();
+      } catch (_) {}
+    }
+
+    const userData = fullUser || request.user;
     return reply.status(200).send(
       apiSuccess({
         message: 'Authenticated profile retrieved',
         data: {
-          user: request.user,
-          tenantId: request.tenantId,
-          branchId: request.branchId,
+          user: {
+            ...userData,
+            primaryRole: userData.role,
+          },
+          tenantId: request.tenantId || userData.tenantId,
+          branchId: request.branchId || userData.branchId,
         },
       })
     );

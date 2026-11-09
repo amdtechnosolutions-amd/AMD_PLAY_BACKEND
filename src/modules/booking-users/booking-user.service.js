@@ -5,6 +5,8 @@ import { ROLES, BOOKING_STATUS } from '../../config/constants.js';
 import { NotFoundError, ValidationError, ConflictError } from '../../errors/AppError.js';
 import { HikvisionService, hikvisionService } from '../iot/hikvision.service.js';
 import { Device } from '../iot/device.model.js';
+import { MemberSubscription } from '../memberships/memberSubscription.model.js';
+import { Enrollment } from '../coaching/enrollment.model.js';
 
 export class BookingUserService {
   /**
@@ -135,10 +137,37 @@ export class BookingUserService {
     const limit = pagination.limit || 20;
     const skip = (page - 1) * limit;
 
+    const excludedRoles = [
+      ROLES.COACH,
+      'trainer',
+      ROLES.STUDENT,
+      ROLES.MEMBER,
+      ROLES.STAFF,
+      ROLES.TENANT_ADMIN,
+      ROLES.SUPER_ADMIN,
+      ROLES.PLATFORM_ADMIN,
+      ROLES.BRANCH_ADMIN,
+    ];
+
     const query = {
       tenantId,
-      role: ROLES.CUSTOMER,
+      role: { $nin: excludedRoles, $eq: ROLES.CUSTOMER },
     };
+
+    // Filter out any users who hold active memberships or coaching enrollments
+    try {
+      const [subUserIds, enrStudentIds] = await Promise.all([
+        MemberSubscription.distinct('userId', { tenantId, status: 'active' }),
+        Enrollment.distinct('studentId', { tenantId, status: 'active' }),
+      ]);
+      const primaryNonBookingIds = [
+        ...(subUserIds || []).filter(Boolean),
+        ...(enrStudentIds || []).filter(Boolean),
+      ];
+      if (primaryNonBookingIds.length > 0) {
+        query._id = { $nin: primaryNonBookingIds };
+      }
+    } catch (_) {}
 
     if (filters.status) {
       query.status = filters.status;
@@ -220,6 +249,7 @@ export class BookingUserService {
 
       return {
         ...user,
+        primaryRole: 'customer',
         name: `${user.firstName} ${user.lastName || ''}`.trim(),
         totalBookings: stat.totalBookings,
         totalSpent: stat.totalSpent,
@@ -245,8 +275,18 @@ export class BookingUserService {
   async getBookingUserById(id, context = {}) {
     const tenantId = context.tenantId;
 
-    const [user, stats, recentBookings] = await Promise.all([
-      User.findOne({ _id: id, tenantId, role: ROLES.CUSTOMER }).select('-password').lean(),
+    const existingUser = await User.findOne({ _id: id, tenantId }).select('-password').lean();
+    if (!existingUser) {
+      throw new NotFoundError(`Booking User with ID '${id}' not found`);
+    }
+
+    if (existingUser.role !== ROLES.CUSTOMER) {
+      throw new ValidationError(
+        `User '${existingUser.firstName} ${existingUser.lastName || ''}' has primary role '${existingUser.role}' (Student / Coach / Member / Staff) and cannot be managed as a generic booking user.`
+      );
+    }
+
+    const [stats, recentBookings] = await Promise.all([
       Booking.aggregate([
         {
           $match: {
@@ -271,14 +311,12 @@ export class BookingUserService {
         .lean(),
     ]);
 
-    if (!user) {
-      throw new NotFoundError(`Booking User with ID '${id}' not found`);
-    }
-
+    const user = existingUser;
     const bookingSummary = stats[0] || { totalBookings: 0, totalSpent: 0, lastBookingDate: null };
 
     return {
       ...user,
+      primaryRole: 'customer',
       name: `${user.firstName} ${user.lastName || ''}`.trim(),
       totalBookings: bookingSummary.totalBookings,
       totalSpent: bookingSummary.totalSpent,

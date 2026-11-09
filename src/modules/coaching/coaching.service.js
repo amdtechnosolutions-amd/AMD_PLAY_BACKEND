@@ -248,7 +248,7 @@ export class CoachingService extends BaseService {
         throw new ValidationError('Student first name is required');
       }
 
-      // Look up existing user by studentId, employeeNo, cardNo, or explicit email
+      // Look up existing user by studentId, employeeNo, cardNo, explicit email, or phone
       let existingUser = null;
       if (data.employeeNo && data.employeeNo.trim()) {
         existingUser = await userRepository.findOne({ tenantId, employeeNo: data.employeeNo.trim() });
@@ -256,6 +256,15 @@ export class CoachingService extends BaseService {
         existingUser = await userRepository.findOne({ tenantId, cardNo: data.cardNo.trim() });
       } else if (data.email && data.email.trim()) {
         existingUser = await userRepository.findOne({ tenantId, email: data.email.toLowerCase().trim() });
+      } else if (data.phone && data.phone.trim()) {
+        const cleanPhone = data.phone.trim();
+        const digits = cleanPhone.replace(/\D/g, '');
+        const phoneVariants = [cleanPhone];
+        if (digits.length === 10) phoneVariants.push(digits, `+91${digits}`, `91${digits}`);
+        existingUser = await userRepository.findOne({
+          tenantId,
+          phone: { $in: phoneVariants },
+        });
       }
 
       // Auto-generate biometric credentials if not provided (e.g. isabd001)

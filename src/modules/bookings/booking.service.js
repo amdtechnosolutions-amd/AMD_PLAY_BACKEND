@@ -79,12 +79,32 @@ export class BookingService extends BaseService {
           phoneVariants.push(ten, `+91${ten}`, `91${ten}`);
         }
 
-        user = await User.findOne({
-          tenantId: resolvedTenantId,
-          phone: { $in: phoneVariants },
+        const ROLE_PRIORITY = {
+          coach: 1,
+          trainer: 2,
+          tenant_admin: 3,
+          branch_admin: 4,
+          manager: 5,
+          staff: 6,
+          member: 7,
+          student: 8,
+          customer: 9,
+        };
+
+        const candidates = await User.find({
+          $or: [
+            { tenantId: resolvedTenantId, phone: { $in: phoneVariants } },
+            { phone: { $in: phoneVariants } },
+          ],
         });
-        if (!user) {
-          user = await User.findOne({ phone: { $in: phoneVariants } });
+
+        if (candidates.length > 0) {
+          candidates.sort((a, b) => {
+            const prioA = ROLE_PRIORITY[a.role] || 99;
+            const prioB = ROLE_PRIORITY[b.role] || 99;
+            return prioA - prioB;
+          });
+          user = candidates[0];
         }
       }
 

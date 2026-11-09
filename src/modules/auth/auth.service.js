@@ -207,6 +207,7 @@ export class AuthService {
       tokenType: 'Bearer',
       user: {
         ...userObj,
+        primaryRole: userObj.role,
         tenant: tenantInfo,
       },
     };

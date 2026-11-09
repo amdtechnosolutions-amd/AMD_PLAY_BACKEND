@@ -73,8 +73,13 @@ export class StaffService {
     }
 
     const existing = await User.findOne({ tenantId, phone });
+    let isUpgradingCustomer = false;
     if (existing) {
-      throw new ConflictError(`User with phone '${phone}' already exists in this academy`);
+      if (existing.role === ROLES.CUSTOMER) {
+        isUpgradingCustomer = true;
+      } else {
+        throw new ConflictError(`User with phone '${phone}' already exists in this academy with role '${existing.role}'`);
+      }
     }
 
     const email = (data.email || `staff_${Date.now()}@amdplay.local`).toLowerCase().trim();
@@ -143,21 +148,19 @@ export class StaffService {
       resolvedDepartment = role === 'coach' ? 'Coaching & Academy' : 'Operations & Court Management';
     }
 
-    const user = await User.create({
-      tenantId,
-      branchId: data.branchId || null,
-      firstName: data.firstName.trim(),
-      lastName: (data.lastName || '').trim(),
-      email,
-      phone,
-      password: 'StaffPassword123!',
-      role,
-      permissions,
-      status: 'active',
-      employeeNo: finalEmployeeNo,
-      pin,
-      cardNo,
-      metadata: {
+    let user;
+    if (isUpgradingCustomer && existing) {
+      existing.role = role;
+      existing.firstName = data.firstName.trim();
+      if (data.lastName !== undefined) existing.lastName = data.lastName.trim();
+      if (data.email && data.email.trim()) existing.email = data.email.toLowerCase().trim();
+      if (data.branchId) existing.branchId = data.branchId;
+      existing.permissions = permissions;
+      if (!existing.employeeNo) existing.employeeNo = finalEmployeeNo;
+      if (pin && !existing.pin) existing.pin = pin;
+      if (cardNo && !existing.cardNo) existing.cardNo = cardNo;
+      existing.metadata = {
+        ...(existing.metadata || {}),
         departmentId,
         designationId,
         department: resolvedDepartment,
@@ -166,8 +169,36 @@ export class StaffService {
         joiningDate: data.joiningDate || new Date().toISOString().split('T')[0],
         sportIds: data.sportIds || [],
         notes: data.notes || '',
-      },
-    });
+      };
+      await existing.save();
+      user = existing;
+    } else {
+      user = await User.create({
+        tenantId,
+        branchId: data.branchId || null,
+        firstName: data.firstName.trim(),
+        lastName: (data.lastName || '').trim(),
+        email,
+        phone,
+        password: 'StaffPassword123!',
+        role,
+        permissions,
+        status: 'active',
+        employeeNo: finalEmployeeNo,
+        pin,
+        cardNo,
+        metadata: {
+          departmentId,
+          designationId,
+          department: resolvedDepartment,
+          designation: resolvedDesignation,
+          salary: data.salary || 0,
+          joiningDate: data.joiningDate || new Date().toISOString().split('T')[0],
+          sportIds: data.sportIds || [],
+          notes: data.notes || '',
+        },
+      });
+    }
 
     // Sync credentials to biometric access control devices
     try {
