@@ -3,6 +3,7 @@ import { Enrollment } from '../coaching/enrollment.model.js';
 import { Attendance } from '../coaching/attendance.model.js';
 import { AttendancePunchLog } from '../coaching/attendance-punch-log.model.js';
 import { MonthlyFee } from '../finance/monthly-fee.model.js';
+import { Evaluation } from '../coaching/evaluation.model.js';
 import { coachingService } from '../coaching/coaching.service.js';
 import { NotFoundError, ValidationError } from '../../errors/AppError.js';
 import { ROLES } from '../../config/constants.js';
@@ -104,11 +105,15 @@ export class StudentService {
    */
   async getStudentById(id, context = {}) {
     const tenantId = context.tenantId;
-    const [student, enrollments, monthlyFees, recentPunches] = await Promise.all([
+    const [student, enrollments, monthlyFees, recentPunches, latestEvaluation] = await Promise.all([
       User.findOne({ _id: id, tenantId, role: ROLES.STUDENT }).select('-password').lean(),
       Enrollment.find({ tenantId, studentId: id }).populate('batchId').lean(),
       MonthlyFee.find({ tenantId, studentId: id }).sort({ year: -1, month: -1 }).limit(12).lean(),
       AttendancePunchLog.find({ tenantId, studentId: id }).sort({ punchTime: -1 }).limit(10).lean(),
+      Evaluation.findOne({ tenantId, studentId: id, status: 'published' })
+        .populate('coachId', 'firstName lastName')
+        .sort({ evaluationDate: -1 })
+        .lean(),
     ]);
 
     if (!student) {
@@ -120,6 +125,7 @@ export class StudentService {
       enrollments,
       monthlyFees,
       recentPunches,
+      latestEvaluation,
     };
   }
 

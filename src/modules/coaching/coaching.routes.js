@@ -1,5 +1,6 @@
 import { coachingController } from './coaching.controller.js';
 import { automatedAttendanceController } from './automated-attendance.controller.js';
+import { evaluationController } from './evaluation.controller.js';
 import {
   createBatchSchema,
   updateBatchSchema,
@@ -11,6 +12,12 @@ import {
   automatedAttendanceStatusSchema,
   automatedAttendanceLogsSchema,
 } from './coaching.schema.js';
+import {
+  createEvaluationSchema,
+  updateEvaluationSchema,
+  evaluationParamSchema,
+  queryEvaluationsSchema,
+} from './evaluation.schema.js';
 import { requireTenantContext } from '../../middleware/tenant.middleware.js';
 
 export default async function coachingRoutes(fastify) {
@@ -95,6 +102,62 @@ export default async function coachingRoutes(fastify) {
     },
     preHandler: [fastify.authenticate, requireTenantContext],
     handler: coachingController.getStudentSummary.bind(coachingController),
+  });
+
+  // --- Coach Performance Assessments & Evaluations ---
+  fastify.get('/coaching/evaluations/template', {
+    schema: {
+      description: 'Get dynamic assessment scorecard template with all 4 categories, 24 metrics, definitions, and max scores',
+      tags: ['Coaching & Evaluations'],
+    },
+    preHandler: [fastify.authenticateOptional],
+    handler: evaluationController.getTemplate.bind(evaluationController),
+  });
+
+  fastify.post('/coaching/evaluations', {
+    schema: createEvaluationSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: evaluationController.createEvaluation.bind(evaluationController),
+  });
+
+  fastify.get('/coaching/evaluations', {
+    schema: queryEvaluationsSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: evaluationController.listEvaluations.bind(evaluationController),
+  });
+
+  fastify.get('/coaching/evaluations/:id', {
+    schema: evaluationParamSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: evaluationController.getEvaluationById.bind(evaluationController),
+  });
+
+  fastify.patch('/coaching/evaluations/:id', {
+    schema: updateEvaluationSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: evaluationController.updateEvaluation.bind(evaluationController),
+  });
+
+  fastify.delete('/coaching/evaluations/:id', {
+    schema: evaluationParamSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: evaluationController.deleteEvaluation.bind(evaluationController),
+  });
+
+  fastify.get('/coaching/students/:id/evaluations', {
+    schema: {
+      ...batchParamSchema,
+      description: '[Roles: tenant_admin, coach, student] Get student performance scorecard history and trends',
+      tags: ['Coaching & Evaluations'],
+    },
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: evaluationController.getStudentEvaluations.bind(evaluationController),
+  });
+
+  fastify.post('/coaching/students/:id/evaluations', {
+    schema: createEvaluationSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: evaluationController.createEvaluation.bind(evaluationController),
   });
 
   // --- Automated Biometric Attendance (Hikvision ACS ISAPI) ---

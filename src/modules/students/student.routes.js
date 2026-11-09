@@ -1,4 +1,6 @@
 import { studentController } from './student.controller.js';
+import { evaluationController } from '../coaching/evaluation.controller.js';
+import { createEvaluationSchema } from '../coaching/evaluation.schema.js';
 import {
   createStudentSchema,
   queryStudentsSchema,
@@ -74,6 +76,27 @@ export default async function studentRoutes(fastify) {
     handler: studentController.getMyFees.bind(studentController),
   });
 
+  // Logged-in Student personal performance evaluation scorecard for Mobile App
+  fastify.get('/students/my/evaluations', {
+    schema: {
+      description: '[Roles: student] Get personal performance feedback scorecard, category breakdown, radar chart data, and progress trends',
+      tags: ['Students Management', 'Coaching & Evaluations'],
+      security: [{ bearerAuth: [] }],
+    },
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: evaluationController.getMyEvaluations.bind(evaluationController),
+  });
+
+  fastify.get('/students/my/evaluations/latest', {
+    schema: {
+      description: '[Roles: student] Get latest detailed performance scorecard with all 24 metric cards',
+      tags: ['Students Management', 'Coaching & Evaluations'],
+      security: [{ bearerAuth: [] }],
+    },
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: evaluationController.getMyLatestEvaluation.bind(evaluationController),
+  });
+
   // Coach batch attendance marking for Mobile App
   fastify.post('/students/attendance/mark', {
     schema: markStudentAttendanceSchema,
@@ -121,6 +144,34 @@ export default async function studentRoutes(fastify) {
     },
     preHandler: [fastify.authenticate, requireTenantContext],
     handler: studentController.getFees.bind(studentController),
+  });
+
+  // Student performance evaluation scorecard reports for Coach, Admin, and Student
+  fastify.get('/students/:id/evaluations', {
+    schema: {
+      ...studentParamSchema,
+      description: '[Roles: tenant_admin, branch_manager, coach, student] Get complete performance evaluations and progression history for a student',
+      tags: ['Students Management', 'Coaching & Evaluations'],
+    },
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: evaluationController.getStudentEvaluations.bind(evaluationController),
+  });
+
+  fastify.get('/students/:id/evaluations/latest', {
+    schema: {
+      ...studentParamSchema,
+      description: '[Roles: tenant_admin, branch_manager, coach, student] Get latest performance scorecard for a student',
+      tags: ['Students Management', 'Coaching & Evaluations'],
+    },
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: evaluationController.getStudentLatestEvaluation.bind(evaluationController),
+  });
+
+  // Direct evaluation submission by Coach for student :id
+  fastify.post('/students/:id/evaluations', {
+    schema: createEvaluationSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: evaluationController.createEvaluation.bind(evaluationController),
   });
 }
 
