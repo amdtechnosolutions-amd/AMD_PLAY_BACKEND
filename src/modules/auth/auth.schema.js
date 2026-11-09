@@ -23,11 +23,14 @@ export const loginSchema = {
   tags: ['Authentication'],
   body: {
     type: 'object',
-    required: ['email', 'password'],
+    required: ['password'],
     properties: {
-      email: { type: 'string', format: 'email', description: 'Registered user email address' },
+      email: { type: 'string', description: 'Registered user email address or mobile phone' },
+      identifier: { type: 'string', description: 'User email, mobile phone number, or staff employee ID' },
+      phone: { type: 'string', description: 'Registered mobile phone number' },
+      role: { type: 'string', description: 'Optional role filter (e.g. coach)' },
       password: { type: 'string', minLength: 1, description: 'User password' },
-      tenantSlug: { type: 'string', description: 'Optional academy slug (e.g. apex-sports). Auto-resolved from email if omitted.' },
+      tenantSlug: { type: 'string', description: 'Optional academy slug (e.g. apex-sports, inertia-sports-academy). Auto-resolved from email/phone if omitted.' },
     },
   },
 };
@@ -46,15 +49,17 @@ export const superAdminLoginSchema = {
 };
 
 export const tenantLoginSchema = {
-  description: 'Dedicated Academy Admin, Coach & Staff authentication. If tenantSlug is omitted, the academy is automatically resolved from the user email and returned in the response with full tenant details.',
+  description: 'Dedicated Academy Admin, Coach & Staff authentication. If tenantSlug is omitted, the academy is automatically resolved and returned in the response with full tenant details.',
   tags: ['Admin Management', 'Authentication'],
   body: {
     type: 'object',
-    required: ['email', 'password'],
+    required: ['password'],
     properties: {
-      email: { type: 'string', format: 'email', description: 'Registered academy user email' },
+      email: { type: 'string', description: 'Registered academy user email or phone' },
+      identifier: { type: 'string', description: 'User email, mobile phone number, or employee ID' },
+      phone: { type: 'string', description: 'Registered mobile phone number' },
       password: { type: 'string', minLength: 1, description: 'User account password' },
-      tenantSlug: { type: 'string', description: 'Optional: Academy unique slug (e.g. apex-sports). If omitted, tenant will be auto-resolved from email.' },
+      tenantSlug: { type: 'string', description: 'Optional: Academy unique slug (e.g. apex-sports). If omitted, tenant will be auto-resolved.' },
     },
   },
 };

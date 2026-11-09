@@ -60,7 +60,12 @@ export class AuthService {
     return userObj;
   }
 
-  async login({ email, password, tenantSlug }) {
+  async login({ email, identifier, phone, password, tenantSlug, role }) {
+    const loginId = (email || identifier || phone || '').trim();
+    if (!loginId || !password) {
+      throw new ValidationError('Email / mobile phone and password are required');
+    }
+
     let targetTenantId = null;
 
     if (tenantSlug && tenantSlug.trim() !== '') {
@@ -70,12 +75,35 @@ export class AuthService {
       }
     }
 
-    // 1. Attempt lookup scoped to tenant if tenant was found
-    let user = await userRepository.findByEmailWithPassword(email, targetTenantId);
+    const orConditions = [
+      { email: loginId.toLowerCase() },
+      { phone: loginId },
+      { employeeNo: loginId },
+    ];
 
-    // 2. If no tenant was specified, find user globally by email (for dedicated platform login)
-    if (!user && !targetTenantId) {
-      user = await userRepository.findByEmailWithPassword(email, null);
+    const cleanedDigits = loginId.replace(/[^\d]/g, '');
+    if (cleanedDigits.length === 10) {
+      orConditions.push({ phone: '+91' + cleanedDigits });
+      orConditions.push({ phone: '91' + cleanedDigits });
+      orConditions.push({ phone: cleanedDigits });
+    }
+
+    const query = { $or: orConditions };
+    if (targetTenantId) {
+      query.tenantId = targetTenantId;
+    }
+    if (role) {
+      query.role = role;
+    }
+
+    let user = await User.findOne(query).select('+password');
+    if (!user && role) {
+      // Fallback without role filter
+      delete query.role;
+      user = await User.findOne(query).select('+password');
+    }
+    if (!user && targetTenantId) {
+      user = await User.findOne({ $or: orConditions }).select('+password');
     }
 
     if (!user) {
@@ -188,7 +216,7 @@ export class AuthService {
     };
   }
 
-  async tenantLogin({ tenantSlug, email, password }) {
+  async tenantLogin({ tenantSlug, email, identifier, phone, password }) {
     let tenant = null;
 
     if (tenantSlug && tenantSlug.trim() !== '') {
@@ -198,12 +226,29 @@ export class AuthService {
       }
     }
 
+    const loginId = (email || identifier || phone || '').trim();
+    if (!loginId || !password) {
+      throw new ValidationError('Email or mobile number and password are required');
+    }
+
+    const orConditions = [
+      { email: loginId.toLowerCase() },
+      { phone: loginId },
+      { employeeNo: loginId },
+    ];
+    const cleanedDigits = loginId.replace(/[^\d]/g, '');
+    if (cleanedDigits.length === 10) {
+      orConditions.push({ phone: '+91' + cleanedDigits });
+      orConditions.push({ phone: '91' + cleanedDigits });
+      orConditions.push({ phone: cleanedDigits });
+    }
+
     let user = null;
     if (tenant) {
-      user = await userRepository.findByEmailWithPassword(email, tenant._id);
+      user = await User.findOne({ tenantId: tenant._id, $or: orConditions }).select('+password');
     } else {
       // Auto-discover tenant if tenantSlug was omitted
-      user = await userRepository.findByEmailWithPassword(email, null);
+      user = await User.findOne({ $or: orConditions }).select('+password');
       if (user && user.tenantId) {
         tenant = await tenantRepository.findById(user.tenantId);
       }
