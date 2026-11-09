@@ -15,6 +15,31 @@ import {
 import { ROLES } from '../../config/constants.js';
 import { getTenantDatabaseName } from '../../utils/tenantDatabase.js';
 
+const ROLE_PRIORITY = {
+  [ROLES.SUPER_ADMIN]: 1,
+  [ROLES.PLATFORM_ADMIN]: 2,
+  [ROLES.TENANT_ADMIN]: 3,
+  [ROLES.BRANCH_ADMIN]: 4,
+  [ROLES.MANAGER]: 5,
+  [ROLES.COACH]: 6,
+  trainer: 7,
+  [ROLES.STAFF]: 8,
+  receptionist: 9,
+  front_desk: 10,
+  accountant: 11,
+  [ROLES.MEMBER]: 12,
+  [ROLES.STUDENT]: 13,
+  [ROLES.CUSTOMER]: 14,
+};
+
+function sortByRolePriority(docs) {
+  return docs.sort((a, b) => {
+    const prioA = ROLE_PRIORITY[a.role] || 99;
+    const prioB = ROLE_PRIORITY[b.role] || 99;
+    return prioA - prioB;
+  });
+}
+
 export class AuthService {
   constructor(jwtSigner) {
     this.jwtSigner = jwtSigner;
@@ -96,31 +121,6 @@ export class AuthService {
       query.role = role;
     }
 
-    const ROLE_PRIORITY = {
-      [ROLES.SUPER_ADMIN]: 1,
-      [ROLES.PLATFORM_ADMIN]: 2,
-      [ROLES.TENANT_ADMIN]: 3,
-      [ROLES.BRANCH_ADMIN]: 4,
-      [ROLES.MANAGER]: 5,
-      [ROLES.COACH]: 6,
-      trainer: 7,
-      [ROLES.STAFF]: 8,
-      receptionist: 9,
-      front_desk: 10,
-      accountant: 11,
-      [ROLES.MEMBER]: 12,
-      [ROLES.STUDENT]: 13,
-      [ROLES.CUSTOMER]: 14,
-    };
-
-    const sortByPriority = (docs) => {
-      return docs.sort((a, b) => {
-        const prioA = ROLE_PRIORITY[a.role] || 99;
-        const prioB = ROLE_PRIORITY[b.role] || 99;
-        return prioA - prioB;
-      });
-    };
-
     let user = null;
     if (role) {
       user = await User.findOne(query).select('+password');
@@ -129,7 +129,7 @@ export class AuthService {
     if (!user) {
       const candidates = await User.find(query).select('+password');
       if (candidates.length > 0) {
-        user = sortByPriority(candidates)[0];
+        user = sortByRolePriority(candidates)[0];
       }
     }
 
@@ -138,14 +138,14 @@ export class AuthService {
       delete query.role;
       const candidates = await User.find(query).select('+password');
       if (candidates.length > 0) {
-        user = sortByPriority(candidates)[0];
+        user = sortByRolePriority(candidates)[0];
       }
     }
 
     if (!user && targetTenantId) {
       const candidates = await User.find({ $or: orConditions }).select('+password');
       if (candidates.length > 0) {
-        user = sortByPriority(candidates)[0];
+        user = sortByRolePriority(candidates)[0];
       }
     }
 
