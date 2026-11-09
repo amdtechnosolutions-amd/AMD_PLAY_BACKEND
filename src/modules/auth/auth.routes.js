@@ -9,6 +9,10 @@ import {
   memberLoginSchema,
   registerAndBookSchema,
   guestRegisterSchema,
+  resetPasswordSchema,
+  studentResetPasswordSchema,
+  changePasswordSchema,
+  adminResetPasswordSchema,
 } from './auth.schema.js';
 import { requireTenantContext } from '../../middleware/tenant.middleware.js';
 
@@ -78,6 +82,32 @@ export default async function authRoutes(fastify) {
     },
     preHandler: [fastify.authenticate, requireTenantContext],
     handler: authController.getProfile.bind(authController),
+  });
+
+  // Universal Password Reset (Coach, Admin, Staff, Student)
+  fastify.post('/auth/reset-password', {
+    schema: resetPasswordSchema,
+    handler: authController.resetPassword.bind(authController),
+  });
+
+  // Dedicated Student Password Reset (by regNo, phone, or email)
+  fastify.post('/auth/student/reset-password', {
+    schema: studentResetPasswordSchema,
+    handler: authController.studentResetPassword.bind(authController),
+  });
+
+  // Authenticated Change Password (Current Password + New Password)
+  fastify.post('/auth/change-password', {
+    schema: changePasswordSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: authController.changePassword.bind(authController),
+  });
+
+  // Admin / Coach direct password reset for a user or student by ID
+  fastify.post('/auth/users/:id/reset-password', {
+    schema: adminResetPasswordSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: authController.adminResetPassword.bind(authController),
   });
 }
 

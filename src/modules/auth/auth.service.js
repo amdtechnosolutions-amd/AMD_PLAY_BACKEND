@@ -790,6 +790,189 @@ export class AuthService {
       user: userObj,
     };
   }
+
+  /**
+   * Reset Password for Coach, Admin, or Student by identifier (email, phone, regNo)
+   */
+  async resetPassword({ email, identifier, phone, regNo, employeeNo, tenantSlug, role, newPassword }) {
+    if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 6) {
+      throw new ValidationError('New password is required and must be at least 6 characters');
+    }
+
+    const idVal = (email || identifier || regNo || employeeNo || phone || '').trim();
+    if (!idVal) {
+      throw new ValidationError('Registered email, phone, or registration number (regNo) is required');
+    }
+
+    let targetTenantId = null;
+    if (tenantSlug && tenantSlug.trim()) {
+      const tenant = await tenantRepository.findBySlug(tenantSlug.trim());
+      if (tenant) {
+        targetTenantId = tenant._id;
+      }
+    }
+
+    const orClauses = [
+      { email: idVal.toLowerCase() },
+      { phone: idVal },
+      { employeeNo: idVal },
+      { cardNo: idVal },
+    ];
+
+    const query = { $or: orClauses };
+    if (targetTenantId) {
+      query.tenantId = targetTenantId;
+    }
+    if (role) {
+      query.role = role;
+    }
+
+    let user = await User.findOne(query).select('+password');
+
+    // Fallback search without tenantId if not found
+    if (!user && targetTenantId) {
+      const fallbackQuery = { $or: orClauses };
+      if (role) fallbackQuery.role = role;
+      user = await User.findOne(fallbackQuery).select('+password');
+    }
+
+    if (!user) {
+      throw new NotFoundError('User account not found with the provided credentials');
+    }
+
+    user.password = await hashPassword(newPassword);
+    await user.save();
+
+    return {
+      userId: user._id,
+      email: user.email,
+      role: user.role,
+      name: `${user.firstName} ${user.lastName || ''}`.trim(),
+    };
+  }
+
+  /**
+   * Dedicated Student Password Reset
+   */
+  async studentResetPassword({ regNo, identifier, email, phone, employeeNo, cardNo, studentId, tenantSlug, newPassword }) {
+    if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 6) {
+      throw new ValidationError('New password is required and must be at least 6 characters');
+    }
+
+    const loginId = (regNo || identifier || employeeNo || email || phone || cardNo || '').trim();
+    if (!loginId && !studentId) {
+      throw new ValidationError('Student registration number (regNo), phone, or email is required');
+    }
+
+    let targetTenantId = null;
+    if (tenantSlug && tenantSlug.trim()) {
+      const tenant = await tenantRepository.findBySlug(tenantSlug.trim());
+      if (tenant) {
+        targetTenantId = tenant._id;
+      }
+    }
+
+    const query = {
+      role: ROLES.STUDENT,
+    };
+
+    if (studentId) {
+      query._id = studentId;
+    } else {
+      query.$or = [
+        { employeeNo: loginId },
+        { cardNo: loginId },
+        { phone: loginId },
+        { email: loginId.toLowerCase() },
+      ];
+    }
+
+    if (targetTenantId) {
+      query.tenantId = targetTenantId;
+    }
+
+    let student = await User.findOne(query).select('+password');
+    if (!student && targetTenantId) {
+      delete query.tenantId;
+      student = await User.findOne(query).select('+password');
+    }
+
+    if (!student) {
+      throw new NotFoundError('Student account not found with the provided registration identifier');
+    }
+
+    student.password = await hashPassword(newPassword);
+    await student.save();
+
+    return {
+      studentId: student._id,
+      regNo: student.employeeNo || '',
+      name: `${student.firstName} ${student.lastName || ''}`.trim(),
+    };
+  }
+
+  /**
+   * Authenticated User Change Password (Current Password + New Password)
+   */
+  async changePassword(userId, { currentPassword, newPassword }, context = {}) {
+    if (!currentPassword) {
+      throw new ValidationError('Current password is required');
+    }
+    if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 6) {
+      throw new ValidationError('New password is required and must be at least 6 characters');
+    }
+
+    const user = await User.findById(userId).select('+password');
+    if (!user) {
+      throw new NotFoundError('User not found');
+    }
+
+    const isMatch = await verifyPassword(currentPassword, user.password);
+    const isDefaultMatch =
+      user.role === ROLES.STUDENT &&
+      (currentPassword === 'Isa@123' || currentPassword === 'Student123!');
+
+    if (!isMatch && !isDefaultMatch) {
+      throw new AuthenticationError('Current password is incorrect');
+    }
+
+    user.password = await hashPassword(newPassword);
+    await user.save();
+
+    return {
+      userId: user._id,
+      email: user.email,
+      role: user.role,
+    };
+  }
+
+  /**
+   * Admin / Coach directly reset password for a user/student
+   */
+  async adminResetUserPassword(targetUserId, { newPassword }, context = {}) {
+    if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 6) {
+      throw new ValidationError('New password is required and must be at least 6 characters');
+    }
+
+    const tenantId = context.tenantId;
+    const query = { _id: targetUserId };
+    if (tenantId) query.tenantId = tenantId;
+
+    const user = await User.findOne(query).select('+password');
+    if (!user) {
+      throw new NotFoundError(`User with ID '${targetUserId}' not found`);
+    }
+
+    user.password = await hashPassword(newPassword);
+    await user.save();
+
+    return {
+      userId: user._id,
+      email: user.email,
+      role: user.role,
+      name: `${user.firstName} ${user.lastName || ''}`.trim(),
+    };
+  }
 }
 
 

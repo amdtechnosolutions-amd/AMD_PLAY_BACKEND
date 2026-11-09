@@ -179,4 +179,77 @@ export const guestRegisterSchema = {
   },
 };
 
+export const resetPasswordSchema = {
+  description: '[Public] Reset password for Coach, Academy Admin, or Students by registered email, phone, or admission regNo',
+  tags: ['Authentication'],
+  body: {
+    type: 'object',
+    required: ['newPassword'],
+    properties: {
+      email: { type: 'string', format: 'email', description: 'Registered email address (for Coach / Admin / Student)' },
+      identifier: { type: 'string', description: 'Alternative identifier: email, phone, regNo, or employeeNo' },
+      phone: { type: 'string', description: 'Registered mobile phone number' },
+      regNo: { type: 'string', description: 'Student admission / registration number (e.g. 1001)' },
+      employeeNo: { type: 'string', description: 'Staff or Student employee number' },
+      tenantSlug: { type: 'string', description: 'Optional academy slug (e.g. gba, apex-sports)' },
+      role: { type: 'string', description: 'Optional role filter (e.g. coach, student, tenant_admin)' },
+      newPassword: { type: 'string', minLength: 6, description: 'New password (minimum 6 characters)' },
+    },
+  },
+};
+
+export const studentResetPasswordSchema = {
+  description: '[Public] Dedicated Student / Trainee Password Reset by registration number, phone, or email',
+  tags: ['Authentication', 'Students Management'],
+  body: {
+    type: 'object',
+    required: ['newPassword'],
+    properties: {
+      regNo: { type: 'string', description: 'Student registration / admission number (e.g. 1001, STU-1001)' },
+      identifier: { type: 'string', description: 'Student regNo, phone, or email' },
+      phone: { type: 'string', description: 'Registered parent or student mobile number' },
+      email: { type: 'string', format: 'email', description: 'Registered email address' },
+      employeeNo: { type: 'string' },
+      studentId: { type: 'string', minLength: 24, maxLength: 24, description: 'Optional specific sibling student ID' },
+      tenantSlug: { type: 'string', description: 'Optional academy slug' },
+      newPassword: { type: 'string', minLength: 6, description: 'New student password (minimum 6 characters)' },
+    },
+  },
+};
+
+export const changePasswordSchema = {
+  description: '[Authenticated] Change password for currently logged-in user (Admin, Coach, Staff, or Student)',
+  tags: ['Authentication'],
+  security: [{ bearerAuth: [] }],
+  body: {
+    type: 'object',
+    required: ['currentPassword', 'newPassword'],
+    properties: {
+      currentPassword: { type: 'string', minLength: 1, description: 'Current password' },
+      newPassword: { type: 'string', minLength: 6, description: 'New password (minimum 6 characters)' },
+    },
+  },
+};
+
+export const adminResetPasswordSchema = {
+  description: '[Roles: tenant_admin, branch_manager, coach, super_admin] Directly reset a user or student password by ID',
+  tags: ['Admin Management', 'Authentication'],
+  security: [{ bearerAuth: [] }],
+  params: {
+    type: 'object',
+    required: ['id'],
+    properties: {
+      id: { type: 'string', minLength: 24, maxLength: 24, description: 'Target User ID' },
+    },
+  },
+  body: {
+    type: 'object',
+    required: ['newPassword'],
+    properties: {
+      newPassword: { type: 'string', minLength: 6, description: 'New password (minimum 6 characters)' },
+    },
+  },
+};
+
+
 

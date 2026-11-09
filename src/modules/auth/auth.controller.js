@@ -111,5 +111,53 @@ export class AuthController {
       })
     );
   }
+
+  async resetPassword(request, reply) {
+    const result = await this.authService.resetPassword(request.body);
+    return reply.status(200).send(
+      apiSuccess({
+        message: 'Password reset successfully',
+        data: result,
+      })
+    );
+  }
+
+  async studentResetPassword(request, reply) {
+    const result = await this.authService.studentResetPassword(request.body);
+    return reply.status(200).send(
+      apiSuccess({
+        message: 'Student password reset successfully',
+        data: result,
+      })
+    );
+  }
+
+  async changePassword(request, reply) {
+    const userId = request.user?.id || request.user?.sub;
+    const result = await this.authService.changePassword(userId, request.body, {
+      tenantId: request.tenantId,
+      user: request.user,
+    });
+    return reply.status(200).send(
+      apiSuccess({
+        message: 'Password changed successfully',
+        data: result,
+      })
+    );
+  }
+
+  async adminResetPassword(request, reply) {
+    const targetUserId = request.params.id;
+    const result = await this.authService.adminResetUserPassword(targetUserId, request.body, {
+      tenantId: request.tenantId,
+      user: request.user,
+    });
+    return reply.status(200).send(
+      apiSuccess({
+        message: 'User password reset successfully',
+        data: result,
+      })
+    );
+  }
 }
 

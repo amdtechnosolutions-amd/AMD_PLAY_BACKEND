@@ -1,6 +1,7 @@
 import { studentController } from './student.controller.js';
 import { evaluationController } from '../coaching/evaluation.controller.js';
 import { createEvaluationSchema } from '../coaching/evaluation.schema.js';
+import { adminResetPasswordSchema } from '../auth/auth.schema.js';
 import {
   createStudentSchema,
   queryStudentsSchema,
@@ -172,6 +173,25 @@ export default async function studentRoutes(fastify) {
     schema: createEvaluationSchema,
     preHandler: [fastify.authenticate, requireTenantContext],
     handler: evaluationController.createEvaluation.bind(evaluationController),
+  });
+
+  // Direct student password reset by Coach or Admin
+  fastify.post('/students/:id/reset-password', {
+    schema: adminResetPasswordSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: async (request, reply) => {
+      const { AuthService } = await import('../auth/auth.service.js');
+      const authService = new AuthService(fastify.jwt.sign.bind(fastify.jwt));
+      const result = await authService.adminResetUserPassword(request.params.id, request.body, {
+        tenantId: request.tenantId,
+        user: request.user,
+      });
+      return reply.status(200).send({
+        success: true,
+        message: 'Student password reset successfully',
+        data: result,
+      });
+    },
   });
 }
 
