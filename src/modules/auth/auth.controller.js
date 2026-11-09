@@ -112,6 +112,16 @@ export class AuthController {
     );
   }
 
+  async forgotPassword(request, reply) {
+    const result = await this.authService.forgotPassword(request.body);
+    return reply.status(200).send(
+      apiSuccess({
+        message: 'Password reset OTP generated and dispatched',
+        data: result,
+      })
+    );
+  }
+
   async resetPassword(request, reply) {
     const result = await this.authService.resetPassword(request.body);
     return reply.status(200).send(

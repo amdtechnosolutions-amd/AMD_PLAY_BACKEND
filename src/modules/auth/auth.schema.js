@@ -179,8 +179,24 @@ export const guestRegisterSchema = {
   },
 };
 
+export const forgotPasswordSchema = {
+  description: '[Public] Request a 6-digit verification OTP via WhatsApp / SMS for password reset (Coach, Admin, or Student)',
+  tags: ['Authentication'],
+  body: {
+    type: 'object',
+    properties: {
+      email: { type: 'string', format: 'email', description: 'Registered email' },
+      identifier: { type: 'string', description: 'Email, mobile phone number, or student regNo' },
+      phone: { type: 'string', description: 'Registered 10-digit mobile number' },
+      regNo: { type: 'string', description: 'Student registration / admission number' },
+      employeeNo: { type: 'string' },
+      tenantSlug: { type: 'string', description: 'Optional academy slug' },
+    },
+  },
+};
+
 export const resetPasswordSchema = {
-  description: '[Public] Reset password for Coach, Academy Admin, or Students by registered email, phone, or admission regNo',
+  description: '[Public] Reset password for Coach, Academy Admin, or Students by registered email, phone, or admission regNo (with optional OTP)',
   tags: ['Authentication'],
   body: {
     type: 'object',
@@ -193,6 +209,7 @@ export const resetPasswordSchema = {
       employeeNo: { type: 'string', description: 'Staff or Student employee number' },
       tenantSlug: { type: 'string', description: 'Optional academy slug (e.g. gba, apex-sports)' },
       role: { type: 'string', description: 'Optional role filter (e.g. coach, student, tenant_admin)' },
+      otp: { type: 'string', description: 'Optional 6-digit OTP received via WhatsApp / SMS' },
       newPassword: { type: 'string', minLength: 6, description: 'New password (minimum 6 characters)' },
     },
   },
@@ -212,6 +229,7 @@ export const studentResetPasswordSchema = {
       employeeNo: { type: 'string' },
       studentId: { type: 'string', minLength: 24, maxLength: 24, description: 'Optional specific sibling student ID' },
       tenantSlug: { type: 'string', description: 'Optional academy slug' },
+      otp: { type: 'string', description: 'Optional 6-digit OTP received via WhatsApp / SMS' },
       newPassword: { type: 'string', minLength: 6, description: 'New student password (minimum 6 characters)' },
     },
   },

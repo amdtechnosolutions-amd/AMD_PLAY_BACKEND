@@ -9,6 +9,7 @@ import {
   memberLoginSchema,
   registerAndBookSchema,
   guestRegisterSchema,
+  forgotPasswordSchema,
   resetPasswordSchema,
   studentResetPasswordSchema,
   changePasswordSchema,
@@ -82,6 +83,18 @@ export default async function authRoutes(fastify) {
     },
     preHandler: [fastify.authenticate, requireTenantContext],
     handler: authController.getProfile.bind(authController),
+  });
+
+  // Request Password Reset OTP (Coach, Admin, Staff, Student)
+  fastify.post('/auth/forgot-password', {
+    schema: forgotPasswordSchema,
+    handler: authController.forgotPassword.bind(authController),
+  });
+
+  // Dedicated Student Forgot Password Request
+  fastify.post('/auth/student/forgot-password', {
+    schema: forgotPasswordSchema,
+    handler: authController.forgotPassword.bind(authController),
   });
 
   // Universal Password Reset (Coach, Admin, Staff, Student)

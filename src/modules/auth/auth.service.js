@@ -792,9 +792,89 @@ export class AuthService {
   }
 
   /**
+   * Request Forgot Password OTP
+   */
+  async forgotPassword({ email, identifier, phone, regNo, employeeNo, tenantSlug, role }) {
+    const idVal = (email || identifier || regNo || employeeNo || phone || '').trim();
+    if (!idVal) {
+      throw new ValidationError('Registered email, mobile number, or registration number (regNo) is required');
+    }
+
+    let targetTenantId = null;
+    if (tenantSlug && tenantSlug.trim()) {
+      const tenant = await tenantRepository.findBySlug(tenantSlug.trim());
+      if (tenant) {
+        targetTenantId = tenant._id;
+      }
+    }
+
+    const orClauses = [
+      { email: idVal.toLowerCase() },
+      { phone: idVal },
+      { employeeNo: idVal },
+      { cardNo: idVal },
+    ];
+
+    const query = { $or: orClauses };
+    if (targetTenantId) {
+      query.tenantId = targetTenantId;
+    }
+    if (role) {
+      query.role = role;
+    }
+
+    let user = await User.findOne(query);
+    if (!user && targetTenantId) {
+      const fallback = { $or: orClauses };
+      if (role) fallback.role = role;
+      user = await User.findOne(fallback);
+    }
+
+    if (!user) {
+      throw new NotFoundError('No registered account found with the provided details');
+    }
+
+    // Generate 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 mins
+
+    user.metadata = user.metadata || {};
+    user.metadata.resetOtp = otp;
+    user.metadata.resetOtpExpires = expiresAt;
+    user.markModified('metadata');
+    await user.save();
+
+    // Dispatch WhatsApp notification if phone number exists
+    if (user.phone) {
+      try {
+        const { WABridgeService } = await import('../notifications/wabridge.service.js');
+        const waBridge = new WABridgeService();
+        await waBridge.sendTextMessage({
+          destinationNumber: user.phone,
+          message: `Your verification code for AMD Play password reset is: ${otp}. Valid for 15 minutes.`,
+        });
+      } catch (err) {
+        console.warn('[ForgotPassword] WhatsApp notification dispatch notice:', err.message);
+      }
+    }
+
+    const maskedPhone = user.phone ? user.phone.replace(/(\d{2})\d+(\d{2})/, '$1******$2') : null;
+    const maskedEmail = user.email ? user.email.replace(/(.{2})(.*)(@.*)/, '$1***$3') : null;
+
+    return {
+      message: 'Password reset OTP generated successfully',
+      target: maskedPhone || maskedEmail || 'registered account',
+      phone: maskedPhone,
+      email: maskedEmail,
+      otp, // included for easy frontend development & testing
+      expiresIn: '15 minutes',
+    };
+  }
+
+  /**
    * Reset Password for Coach, Admin, or Student by identifier (email, phone, regNo)
    */
-  async resetPassword({ email, identifier, phone, regNo, employeeNo, tenantSlug, role, newPassword }) {
+  async resetPassword({ email, identifier, phone, regNo, employeeNo, tenantSlug, role, otp, newPassword }) {
     if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 6) {
       throw new ValidationError('New password is required and must be at least 6 characters');
     }
@@ -840,6 +920,23 @@ export class AuthService {
       throw new NotFoundError('User account not found with the provided credentials');
     }
 
+    // Verify OTP if OTP was provided
+    if (otp) {
+      const storedOtp = user.metadata?.resetOtp;
+      const expiresAt = user.metadata?.resetOtpExpires ? new Date(user.metadata.resetOtpExpires) : null;
+
+      if (!storedOtp || storedOtp !== String(otp).trim()) {
+        throw new ValidationError('Invalid verification OTP code');
+      }
+      if (expiresAt && new Date() > expiresAt) {
+        throw new ValidationError('Verification OTP code has expired. Please request a new one.');
+      }
+
+      user.metadata.resetOtp = null;
+      user.metadata.resetOtpExpires = null;
+      user.markModified('metadata');
+    }
+
     user.password = await hashPassword(newPassword);
     await user.save();
 
@@ -854,7 +951,7 @@ export class AuthService {
   /**
    * Dedicated Student Password Reset
    */
-  async studentResetPassword({ regNo, identifier, email, phone, employeeNo, cardNo, studentId, tenantSlug, newPassword }) {
+  async studentResetPassword({ regNo, identifier, email, phone, employeeNo, cardNo, studentId, tenantSlug, otp, newPassword }) {
     if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 6) {
       throw new ValidationError('New password is required and must be at least 6 characters');
     }
@@ -899,6 +996,23 @@ export class AuthService {
 
     if (!student) {
       throw new NotFoundError('Student account not found with the provided registration identifier');
+    }
+
+    // Verify OTP if provided
+    if (otp) {
+      const storedOtp = student.metadata?.resetOtp;
+      const expiresAt = student.metadata?.resetOtpExpires ? new Date(student.metadata.resetOtpExpires) : null;
+
+      if (!storedOtp || storedOtp !== String(otp).trim()) {
+        throw new ValidationError('Invalid verification OTP code');
+      }
+      if (expiresAt && new Date() > expiresAt) {
+        throw new ValidationError('Verification OTP code has expired. Please request a new one.');
+      }
+
+      student.metadata.resetOtp = null;
+      student.metadata.resetOtpExpires = null;
+      student.markModified('metadata');
     }
 
     student.password = await hashPassword(newPassword);
