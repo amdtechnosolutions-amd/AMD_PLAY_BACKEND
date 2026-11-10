@@ -9,6 +9,8 @@ import {
   markAttendanceSchema,
   queryBatchesSchema,
   batchParamSchema,
+  batchStudentsDropdownSchema,
+  batchWiseStudentsDropdownSchema,
   automatedAttendanceStatusSchema,
   automatedAttendanceLogsSchema,
 } from './coaching.schema.js';
@@ -37,6 +39,34 @@ export default async function coachingRoutes(fastify) {
     schema: batchParamSchema,
     preHandler: [fastify.authenticate, requireTenantContext],
     handler: coachingController.getBatchById.bind(coachingController),
+  });
+
+  // Batch-Wise Students Grouped Dropdown List
+  fastify.get('/coaching/batch-wise-students', {
+    schema: batchWiseStudentsDropdownSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: coachingController.getBatchWiseStudentsDropdown.bind(coachingController),
+  });
+
+  // Alias for batch-wise students dropdown
+  fastify.get('/coaching/batches/students/dropdown', {
+    schema: batchWiseStudentsDropdownSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: coachingController.getBatchWiseStudentsDropdown.bind(coachingController),
+  });
+
+  // Students Dropdown for a Specific Batch ID
+  fastify.get('/coaching/batches/:id/students/dropdown', {
+    schema: batchStudentsDropdownSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: coachingController.getBatchStudentsDropdown.bind(coachingController),
+  });
+
+  // Alias: Students in a Specific Batch ID
+  fastify.get('/coaching/batches/:id/students', {
+    schema: batchStudentsDropdownSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: coachingController.getBatchStudentsDropdown.bind(coachingController),
   });
 
   fastify.patch('/coaching/batches/:id', {

@@ -20,6 +20,9 @@ import { wabridgeService } from '../notifications/wabridge.service.js';
 import { MembershipPlan } from '../memberships/membershipPlan.model.js';
 import { MemberSubscription } from '../memberships/memberSubscription.model.js';
 import { Resource } from '../resources/resource.model.js';
+import { Enrollment } from './enrollment.model.js';
+import { Skill } from '../skills/skill.model.js';
+import { User } from '../users/user.model.js';
 
 export class CoachingService extends BaseService {
   constructor() {
@@ -229,6 +232,236 @@ export class CoachingService extends BaseService {
     }));
     batchObj.enrolledCount = batchObj.students.length;
     return batchObj;
+  }
+
+  /**
+   * Get enrolled students dropdown list for a specific batch
+   */
+  async getBatchStudentsDropdown(batchId, filters = {}, context = {}) {
+    const tenantId = context.tenantId;
+    if (!tenantId) {
+      throw new ValidationError('Tenant context is required');
+    }
+
+    const batch = await batchRepository.findById(batchId, tenantId);
+    if (!batch) {
+      throw new NotFoundError(`Batch with ID '${batchId}' not found`);
+    }
+
+    let sportName = '';
+    if (batch.sportId) {
+      try {
+        const sport =
+          (await sportRepository.findById(batch.sportId, tenantId)) ||
+          (await sportRepository.findById(batch.sportId, null));
+        if (sport) sportName = sport.name;
+      } catch (_) {}
+    }
+
+    const skillMap = new Map();
+    try {
+      const skills = await Skill.find({}).lean();
+      for (const s of skills) {
+        skillMap.set(s._id.toString(), s.name);
+      }
+    } catch (_) {}
+
+    const enrollmentQuery = {
+      tenantId,
+      batchId,
+      status: filters.status || 'active',
+    };
+
+    const enrollments = await Enrollment.find(enrollmentQuery)
+      .populate({
+        path: 'studentId',
+        select: 'firstName lastName email phone employeeNo cardNo pin status metadata createdAt',
+      })
+      .sort({ createdAt: 1 })
+      .lean();
+
+    let students = (enrollments || [])
+      .filter((e) => e.studentId && (e.studentId.status === 'active' || !filters.onlyActive))
+      .map((e) => {
+        const s = e.studentId;
+        const fullName = `${s.firstName || ''} ${s.lastName || ''}`.trim();
+        const code = s.employeeNo || s.email || s.phone || '';
+        const rawSkill = s.metadata?.skillLevel || '';
+        const skillName = skillMap.get(rawSkill?.toString()) || rawSkill || 'Beginner';
+
+        return {
+          id: s._id.toString(),
+          value: s._id.toString(),
+          label: `${fullName} (${code})`.trim(),
+          name: fullName,
+          firstName: s.firstName || '',
+          lastName: s.lastName || '',
+          employeeNo: s.employeeNo || '',
+          regNo: s.employeeNo || '',
+          phone: s.phone || '',
+          email: s.email || '',
+          cardNo: s.cardNo || '',
+          gender: s.metadata?.gender || '',
+          dateOfBirth: s.metadata?.dateOfBirth || null,
+          skillLevel: skillName,
+          parentName: s.metadata?.parentName || '',
+          parentPhone: s.metadata?.parentPhone || '',
+          batchId: batch._id.toString(),
+          batchName: batch.name,
+          sportId: batch.sportId ? batch.sportId.toString() : null,
+          sportName,
+          enrollmentId: e._id.toString(),
+          enrollmentDate: e.enrollmentDate || e.createdAt,
+          feeStatus: e.feeStatus || 'paid',
+          monthlyFee: e.monthlyFee || batch.monthlyFee || 0,
+          status: e.status,
+        };
+      });
+
+    if (filters.search) {
+      const q = filters.search.toLowerCase().trim();
+      students = students.filter(
+        (st) =>
+          st.name.toLowerCase().includes(q) ||
+          st.employeeNo.toLowerCase().includes(q) ||
+          st.phone.includes(q) ||
+          st.email.toLowerCase().includes(q)
+      );
+    }
+
+    return {
+      batchId: batch._id.toString(),
+      batchName: batch.name,
+      batchCode: batch.code || '',
+      sportName,
+      totalStudents: students.length,
+      items: students,
+    };
+  }
+
+  /**
+   * Get all batches with their enrolled students formatted for dropdowns
+   */
+  async getBatchWiseStudentsDropdown(filters = {}, context = {}) {
+    const tenantId = context.tenantId;
+    if (!tenantId) {
+      throw new ValidationError('Tenant context is required');
+    }
+
+    const query = { tenantId, status: filters.status || 'active' };
+    if (filters.branchId) query.branchId = filters.branchId;
+    if (filters.sportId) query.sportId = filters.sportId;
+
+    if (context.user && (context.user.role === ROLES.COACH || context.user.role === 'trainer')) {
+      const coachUserId = context.user.id || context.user.sub || context.user._id;
+      if (coachUserId) query.coachId = coachUserId;
+    } else if (filters.coachId) {
+      query.coachId = filters.coachId;
+    }
+
+    const batches = await Batch.find(query)
+      .populate('sportId', 'name slug')
+      .populate('coachId', 'firstName lastName email phone')
+      .populate('branchId', 'name code')
+      .sort({ name: 1 })
+      .lean();
+
+    const skillMap = new Map();
+    try {
+      const skills = await Skill.find({}).lean();
+      for (const s of skills) {
+        skillMap.set(s._id.toString(), s.name);
+      }
+    } catch (_) {}
+
+    const batchIds = batches.map((b) => b._id);
+    const enrollments = await Enrollment.find({
+      tenantId,
+      batchId: { $in: batchIds },
+      status: 'active',
+    })
+      .populate({
+        path: 'studentId',
+        select: 'firstName lastName email phone employeeNo cardNo pin status metadata createdAt',
+      })
+      .sort({ createdAt: 1 })
+      .lean();
+
+    const enrollmentsByBatch = new Map();
+    for (const e of enrollments) {
+      const bId = e.batchId.toString();
+      if (!enrollmentsByBatch.has(bId)) enrollmentsByBatch.set(bId, []);
+      enrollmentsByBatch.get(bId).push(e);
+    }
+
+    const result = batches.map((batch) => {
+      const bId = batch._id.toString();
+      const bEnrollments = enrollmentsByBatch.get(bId) || [];
+
+      let students = bEnrollments
+        .filter((e) => e.studentId && e.studentId.status === 'active')
+        .map((e) => {
+          const s = e.studentId;
+          const fullName = `${s.firstName || ''} ${s.lastName || ''}`.trim();
+          const code = s.employeeNo || s.email || s.phone || '';
+          const rawSkill = s.metadata?.skillLevel || '';
+          const skillName = skillMap.get(rawSkill?.toString()) || rawSkill || 'Beginner';
+
+          return {
+            id: s._id.toString(),
+            value: s._id.toString(),
+            label: `${fullName} (${code})`.trim(),
+            name: fullName,
+            firstName: s.firstName || '',
+            lastName: s.lastName || '',
+            employeeNo: s.employeeNo || '',
+            regNo: s.employeeNo || '',
+            phone: s.phone || '',
+            email: s.email || '',
+            cardNo: s.cardNo || '',
+            gender: s.metadata?.gender || '',
+            skillLevel: skillName,
+            parentName: s.metadata?.parentName || '',
+            parentPhone: s.metadata?.parentPhone || '',
+            batchId: bId,
+            batchName: batch.name,
+            enrollmentId: e._id.toString(),
+            status: e.status,
+          };
+        });
+
+      if (filters.search) {
+        const q = filters.search.toLowerCase().trim();
+        students = students.filter(
+          (st) =>
+            st.name.toLowerCase().includes(q) ||
+            st.employeeNo.toLowerCase().includes(q) ||
+            st.phone.includes(q)
+        );
+      }
+
+      return {
+        batchId: bId,
+        batchName: batch.name,
+        code: batch.code || '',
+        level: batch.level || 'all_levels',
+        sportId: batch.sportId?._id?.toString() || batch.sportId?.toString() || null,
+        sportName: batch.sportId?.name || '',
+        coachId: batch.coachId?._id?.toString() || batch.coachId?.toString() || null,
+        coachName: batch.coachId
+          ? `${batch.coachId.firstName || ''} ${batch.coachId.lastName || ''}`.trim()
+          : '',
+        coachPhone: batch.coachId?.phone || '',
+        branchId: batch.branchId?._id?.toString() || batch.branchId?.toString() || null,
+        branchName: batch.branchId?.name || '',
+        schedule: batch.schedule || null,
+        monthlyFee: batch.monthlyFee || 0,
+        enrolledCount: students.length,
+        students,
+      };
+    });
+
+    return result;
   }
 
   async registerStudent(data, context = {}) {

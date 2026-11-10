@@ -5,6 +5,7 @@ import { adminResetPasswordSchema } from '../auth/auth.schema.js';
 import {
   createStudentSchema,
   queryStudentsSchema,
+  studentsDropdownSchema,
   updateStudentSchema,
   studentParamSchema,
   uploadStudentFaceSchema,
@@ -25,6 +26,13 @@ export default async function studentRoutes(fastify) {
     schema: queryStudentsSchema,
     preHandler: [fastify.authenticate, requireTenantContext],
     handler: studentController.listStudents.bind(studentController),
+  });
+
+  // Dedicated Universal & Batch-Wise Student Dropdown
+  fastify.get('/students/dropdown', {
+    schema: studentsDropdownSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: studentController.getStudentsDropdown.bind(studentController),
   });
 
   // Available dynamic skill levels

@@ -202,4 +202,40 @@ export const automatedAttendanceLogsSchema = {
   },
 };
 
+export const batchStudentsDropdownSchema = {
+  description: '[Roles: tenant_admin, branch_manager, coach, staff] Get enrolled students dropdown list for a specific batch',
+  tags: ['Coaching & Batches', 'Students Management'],
+  security: [{ bearerAuth: [] }],
+  params: {
+    type: 'object',
+    required: ['id'],
+    properties: {
+      id: { type: 'string', minLength: 24, maxLength: 24, description: 'Batch ID' },
+    },
+  },
+  querystring: {
+    type: 'object',
+    properties: {
+      search: { type: 'string', description: 'Filter student by name, phone, or regNo' },
+      status: { type: 'string', default: 'active', description: 'Enrollment status filter' },
+    },
+  },
+};
+
+export const batchWiseStudentsDropdownSchema = {
+  description: '[Roles: tenant_admin, branch_manager, coach, staff] Get batch-wise students dropdown list grouped by batch for UI dropdowns, evaluations & attendance',
+  tags: ['Coaching & Batches', 'Students Management'],
+  security: [{ bearerAuth: [] }],
+  querystring: {
+    type: 'object',
+    properties: {
+      branchId: { type: 'string', description: 'Filter by Branch ID' },
+      sportId: { type: 'string', description: 'Filter by Sport ID' },
+      coachId: { type: 'string', description: 'Filter by Coach User ID' },
+      search: { type: 'string', description: 'Filter student by name, phone, or regNo' },
+      status: { type: 'string', default: 'active', description: 'Batch status filter' },
+    },
+  },
+};
+
 

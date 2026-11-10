@@ -4,6 +4,7 @@ import { Attendance } from '../coaching/attendance.model.js';
 import { AttendancePunchLog } from '../coaching/attendance-punch-log.model.js';
 import { MonthlyFee } from '../finance/monthly-fee.model.js';
 import { Evaluation } from '../coaching/evaluation.model.js';
+import { Skill } from '../skills/skill.model.js';
 import { coachingService } from '../coaching/coaching.service.js';
 import { NotFoundError, ValidationError } from '../../errors/AppError.js';
 import { ROLES } from '../../config/constants.js';
@@ -14,6 +15,86 @@ export class StudentService {
    */
   async createStudent(data, context = {}) {
     return await coachingService.registerStudent(data, context);
+  }
+
+  /**
+   * Universal Student Dropdown with optional batchId filter
+   */
+  async getStudentsDropdown(filters = {}, context = {}) {
+    if (filters.batchId) {
+      const res = await coachingService.getBatchStudentsDropdown(filters.batchId, filters, context);
+      return res.items;
+    }
+
+    const tenantId = context.tenantId;
+    if (!tenantId) {
+      throw new ValidationError('Tenant context is required');
+    }
+
+    const query = { tenantId, role: ROLES.STUDENT, status: filters.status || 'active' };
+    if (filters.branchId) query.branchId = filters.branchId;
+
+    const [students, skills, enrollments] = await Promise.all([
+      User.find(query)
+        .select('firstName lastName phone email employeeNo cardNo status metadata')
+        .sort({ firstName: 1 })
+        .lean(),
+      Skill.find({}).lean().catch(() => []),
+      Enrollment.find({ tenantId, status: 'active' }).populate('batchId', 'name code').lean().catch(() => []),
+    ]);
+
+    const skillMap = new Map(skills.map((s) => [s._id.toString(), s.name]));
+    const batchMap = new Map();
+    for (const e of enrollments) {
+      if (e.studentId && e.batchId) {
+        batchMap.set(e.studentId.toString(), {
+          batchId: e.batchId._id.toString(),
+          batchName: e.batchId.name,
+          batchCode: e.batchId.code || '',
+        });
+      }
+    }
+
+    let items = students.map((s) => {
+      const fullName = `${s.firstName || ''} ${s.lastName || ''}`.trim();
+      const code = s.employeeNo || s.email || s.phone || '';
+      const rawSkill = s.metadata?.skillLevel || '';
+      const skillName = skillMap.get(rawSkill?.toString()) || rawSkill || 'Beginner';
+      const bInfo = batchMap.get(s._id.toString()) || {};
+
+      return {
+        id: s._id.toString(),
+        value: s._id.toString(),
+        label: `${fullName} (${code})`.trim(),
+        name: fullName,
+        firstName: s.firstName || '',
+        lastName: s.lastName || '',
+        employeeNo: s.employeeNo || '',
+        regNo: s.employeeNo || '',
+        phone: s.phone || '',
+        email: s.email || '',
+        cardNo: s.cardNo || '',
+        gender: s.metadata?.gender || '',
+        skillLevel: skillName,
+        parentName: s.metadata?.parentName || '',
+        parentPhone: s.metadata?.parentPhone || '',
+        batchId: bInfo.batchId || null,
+        batchName: bInfo.batchName || '',
+        status: s.status,
+      };
+    });
+
+    if (filters.search) {
+      const q = filters.search.toLowerCase().trim();
+      items = items.filter(
+        (st) =>
+          st.name.toLowerCase().includes(q) ||
+          st.employeeNo.toLowerCase().includes(q) ||
+          st.phone.includes(q)
+      );
+    }
+
+    return items;
   }
 
   /**

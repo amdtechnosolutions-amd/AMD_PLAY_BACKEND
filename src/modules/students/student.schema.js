@@ -48,6 +48,21 @@ export const queryStudentsSchema = {
   },
 };
 
+export const studentsDropdownSchema = {
+  description: '[Roles: tenant_admin, branch_manager, coach, staff] Universal student dropdown list with optional batch filter',
+  tags: ['Students Management'],
+  security: [{ bearerAuth: [] }],
+  querystring: {
+    type: 'object',
+    properties: {
+      batchId: { type: 'string', description: 'Filter students enrolled in this Batch ID' },
+      branchId: { type: 'string', description: 'Filter by Branch ID' },
+      search: { type: 'string', description: 'Search keyword by name, phone, or regNo' },
+      status: { type: 'string', default: 'active', description: 'Student status filter' },
+    },
+  },
+};
+
 export const updateStudentSchema = {
   description: '[Roles: tenant_admin, branch_manager, coach] Update student profile, contacts, batch assignment, or status',
   tags: ['Students Management'],

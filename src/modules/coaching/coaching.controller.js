@@ -31,6 +31,44 @@ export class CoachingController extends BaseController {
     );
   }
 
+  async getBatchStudentsDropdown(request, reply) {
+    const context = this._extractContext(request);
+    const result = await coachingService.getBatchStudentsDropdown(
+      request.params.id,
+      request.query || {},
+      context
+    );
+
+    return reply.status(200).send(
+      apiSuccess({
+        message: 'Batch students dropdown retrieved successfully',
+        data: result.items,
+        meta: {
+          batchId: result.batchId,
+          batchName: result.batchName,
+          batchCode: result.batchCode,
+          sportName: result.sportName,
+          totalStudents: result.totalStudents,
+        },
+      })
+    );
+  }
+
+  async getBatchWiseStudentsDropdown(request, reply) {
+    const context = this._extractContext(request);
+    const result = await coachingService.getBatchWiseStudentsDropdown(
+      request.query || {},
+      context
+    );
+
+    return reply.status(200).send(
+      apiSuccess({
+        message: 'Batch-wise students dropdown retrieved successfully',
+        data: result,
+      })
+    );
+  }
+
   async registerStudent(request, reply) {
     const context = this._extractContext(request);
     const result = await coachingService.registerStudent(request.body, context);

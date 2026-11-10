@@ -39,6 +39,17 @@ export class StudentController {
     );
   }
 
+  async getStudentsDropdown(req, reply) {
+    const context = this._extractContext(req);
+    const result = await studentService.getStudentsDropdown(req.query || {}, context);
+    return reply.status(200).send(
+      apiSuccess({
+        message: 'Students dropdown retrieved successfully',
+        data: result,
+      })
+    );
+  }
+
   async getStudentById(req, reply) {
     const context = this._extractContext(req);
     const student = await studentService.getStudentById(req.params.id, context);
