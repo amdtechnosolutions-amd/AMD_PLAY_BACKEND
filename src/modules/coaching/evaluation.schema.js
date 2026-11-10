@@ -5,70 +5,43 @@ export const createEvaluationSchema = {
   body: {
     type: 'object',
     properties: {
-      studentId: { type: 'string', minLength: 24, maxLength: 24, description: 'Student User ID' },
-      coachId: { type: 'string', minLength: 24, maxLength: 24, description: 'Optional Coach ID (defaults to authenticated coach)' },
-      batchId: { type: 'string', minLength: 24, maxLength: 24, description: 'Optional Batch ID' },
-      branchId: { type: 'string', minLength: 24, maxLength: 24 },
-      sportId: { type: 'string', minLength: 24, maxLength: 24 },
+      studentId: { type: 'string', description: 'Student User ID' },
+      coachId: { type: ['string', 'null'], nullable: true, description: 'Optional Coach ID (defaults to authenticated coach)' },
+      batchId: { type: ['string', 'null'], nullable: true, description: 'Optional Batch ID' },
+      branchId: { type: ['string', 'null'], nullable: true },
+      sportId: { type: ['string', 'null'], nullable: true },
       academyName: { type: 'string', default: 'GIRISH BADMINTON ACADEMY' },
       title: { type: 'string', default: 'Coach Performance Assessment & Feedback' },
-      period: { type: 'string', description: 'Evaluation cycle / term (e.g. November 2026)' },
-      evaluationDate: { type: 'string', format: 'date-time' },
+      period: { type: ['string', 'null'], nullable: true, description: 'Evaluation cycle / term (e.g. November 2026)' },
+      evaluationDate: { type: ['string', 'number', 'null'], nullable: true },
       ratings: {
-        type: 'object',
-        properties: {
-          physical: {
-            type: 'object',
-            properties: {
-              agility: { type: 'number', minimum: 0, maximum: 10, default: 10 },
-              speed: { type: 'number', minimum: 0, maximum: 10, default: 10 },
-              stamina: { type: 'number', minimum: 0, maximum: 10, default: 10 },
-              strength: { type: 'number', minimum: 0, maximum: 10, default: 10 },
-              flexibility: { type: 'number', minimum: 0, maximum: 10, default: 10 },
-            },
-          },
-          mental: {
-            type: 'object',
-            properties: {
-              focus: { type: 'number', minimum: 0, maximum: 10, default: 10 },
-              confidence: { type: 'number', minimum: 0, maximum: 10, default: 10 },
-              composure: { type: 'number', minimum: 0, maximum: 10, default: 10 },
-              resilience: { type: 'number', minimum: 0, maximum: 10, default: 10 },
-              sportsmanship: { type: 'number', minimum: 0, maximum: 10, default: 10 },
-            },
-          },
-          skill: {
-            type: 'object',
-            properties: {
-              forehandStrokes: { type: 'number', minimum: 0, maximum: 10, default: 10 },
-              backhandStrokes: { type: 'number', minimum: 0, maximum: 10, default: 10 },
-              serve: { type: 'number', minimum: 0, maximum: 10, default: 10 },
-              smash: { type: 'number', minimum: 0, maximum: 10, default: 10 },
-              dropShots: { type: 'number', minimum: 0, maximum: 10, default: 10 },
-              footwork: { type: 'number', minimum: 0, maximum: 10, default: 10 },
-              netPlay: { type: 'number', minimum: 0, maximum: 10, default: 10 },
-              defensiveSkills: { type: 'number', minimum: 0, maximum: 10, default: 10 },
-            },
-          },
-          attitude: {
-            type: 'object',
-            properties: {
-              punctuality: { type: 'number', minimum: 0, maximum: 10, default: 10 },
-              effort: { type: 'number', minimum: 0, maximum: 10, default: 10 },
-              teamwork: { type: 'number', minimum: 0, maximum: 10, default: 10 },
-              coachability: { type: 'number', minimum: 0, maximum: 10, default: 10 },
-              discipline: { type: 'number', minimum: 0, maximum: 10, default: 10 },
-              positiveAttitude: { type: 'number', minimum: 0, maximum: 10, default: 10 },
-            },
-          },
-        },
+        type: ['object', 'number', 'string'],
+        additionalProperties: true,
       },
-      strengths: { type: 'array', items: { type: 'string' } },
-      areasForImprovement: { type: 'array', items: { type: 'string' } },
-      coachRemarks: { type: 'string', description: 'Overall coach feedback / comments' },
-      feedback: { type: 'string', description: 'Alias for coachRemarks' },
+      // Category level scores (direct or nested)
+      physical: { type: ['number', 'object'] },
+      mental: { type: ['number', 'object'] },
+      skill: { type: ['number', 'object'] },
+      attitude: { type: ['number', 'object'] },
+      physicalScore: { type: 'number' },
+      mentalScore: { type: 'number' },
+      skillScore: { type: 'number' },
+      attitudeScore: { type: 'number' },
+      physicalCondition: { type: 'number' },
+      mentalFocus: { type: 'number' },
+      technicalSkill: { type: 'number' },
+      physicalConditionAndStamina: { type: 'number' },
+      mentalFocusAndResilience: { type: 'number' },
+      technicalSkillAndExecution: { type: 'number' },
+      attitudeAndDiscipline: { type: 'number' },
+      strengths: { type: ['array', 'string', 'null'], nullable: true },
+      areasForImprovement: { type: ['array', 'string', 'null'], nullable: true },
+      coachRemarks: { type: ['string', 'null'], nullable: true, description: 'Overall coach feedback / comments' },
+      feedback: { type: ['string', 'null'], nullable: true, description: 'Alias for coachRemarks' },
+      remarks: { type: ['string', 'null'], nullable: true },
       status: { type: 'string', enum: ['published', 'draft', 'archived'], default: 'published' },
     },
+    additionalProperties: true,
   },
 };
 
@@ -80,10 +53,16 @@ export const updateEvaluationSchema = {
     type: 'object',
     required: ['id'],
     properties: {
-      id: { type: 'string', minLength: 24, maxLength: 24 },
+      id: { type: 'string' },
     },
   },
-  body: createEvaluationSchema.body,
+  body: {
+    type: 'object',
+    properties: {
+      ...createEvaluationSchema.body.properties,
+    },
+    additionalProperties: true,
+  },
 };
 
 export const evaluationParamSchema = {
@@ -94,7 +73,7 @@ export const evaluationParamSchema = {
     type: 'object',
     required: ['id'],
     properties: {
-      id: { type: 'string', minLength: 24, maxLength: 24 },
+      id: { type: 'string' },
     },
   },
 };
@@ -106,16 +85,17 @@ export const queryEvaluationsSchema = {
   querystring: {
     type: 'object',
     properties: {
-      studentId: { type: 'string', minLength: 24, maxLength: 24 },
-      coachId: { type: 'string', minLength: 24, maxLength: 24 },
-      batchId: { type: 'string', minLength: 24, maxLength: 24 },
-      branchId: { type: 'string', minLength: 24, maxLength: 24 },
-      status: { type: 'string', enum: ['published', 'draft', 'archived'] },
-      dateFrom: { type: 'string', format: 'date' },
-      dateTo: { type: 'string', format: 'date' },
-      page: { type: 'integer', minimum: 1, default: 1 },
-      limit: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
+      studentId: { type: 'string' },
+      coachId: { type: 'string' },
+      batchId: { type: 'string' },
+      branchId: { type: 'string' },
+      status: { type: 'string' },
+      dateFrom: { type: ['string', 'null'] },
+      dateTo: { type: ['string', 'null'] },
+      page: { type: ['integer', 'string'], default: 1 },
+      limit: { type: ['integer', 'string'], default: 20 },
     },
+    additionalProperties: true,
   },
 };
 

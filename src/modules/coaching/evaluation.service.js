@@ -61,9 +61,76 @@ export class EvaluationService {
   }
 
   /**
-   * Helper to normalize input ratings (supports both flat and nested objects)
+   * Helper to extract numeric value from candidate keys in a source object
    */
-  _normalizeRatings(inputRatings = {}) {
+  _extractCategoryValue(source, keys) {
+    if (!source || typeof source !== 'object') return undefined;
+    for (const key of keys) {
+      if (source[key] !== undefined && source[key] !== null && source[key] !== '') {
+        const num = Number(source[key]);
+        if (!isNaN(num)) return num;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Helper to normalize input ratings (supports category totals out of 60/50/10,
+   * flat metric maps, and nested category-metric objects).
+   */
+  _normalizeRatings(input = {}) {
+    const data = typeof input === 'object' && input !== null ? input : {};
+    const ratingsObj =
+      typeof data.ratings === 'object' && data.ratings !== null ? data.ratings : {};
+
+    const categoryKeys = {
+      physical: [
+        'physical',
+        'physicalScore',
+        'physicalCondition',
+        'physicalConditionAndStamina',
+        'physical_condition',
+        'physical_condition_and_stamina',
+        'physicalConditionStamina',
+        'stamina',
+        'fitness',
+      ],
+      mental: [
+        'mental',
+        'mentalScore',
+        'mentalFocus',
+        'mentalFocusAndResilience',
+        'mental_focus',
+        'mental_focus_and_resilience',
+        'mentalFocusResilience',
+        'focusAndResilience',
+        'focus',
+      ],
+      skill: [
+        'skill',
+        'skills',
+        'skillScore',
+        'technical',
+        'technicalSkill',
+        'technicalSkillAndExecution',
+        'technical_skill',
+        'technical_skill_and_execution',
+        'technicalSkillExecution',
+        'skillAndExecution',
+        'execution',
+      ],
+      attitude: [
+        'attitude',
+        'attitudeScore',
+        'attitudeAndDiscipline',
+        'attitude_and_discipline',
+        'attitudeDiscipline',
+        'discipline',
+        'behavior',
+        'disciplineAndAttitude',
+      ],
+    };
+
     const normalized = {
       physical: {},
       mental: {},
@@ -71,19 +138,56 @@ export class EvaluationService {
       attitude: {},
     };
 
-    for (const metric of EVALUATION_METRICS) {
-      const cat = metric.category;
-      let val = 10; // baseline default score is 10
+    for (const cat of [
+      EVALUATION_CATEGORIES.PHYSICAL,
+      EVALUATION_CATEGORIES.MENTAL,
+      EVALUATION_CATEGORIES.SKILL,
+      EVALUATION_CATEGORIES.ATTITUDE,
+    ]) {
+      // Find category total score (passed inside ratings or top-level)
+      const catVal =
+        this._extractCategoryValue(ratingsObj, categoryKeys[cat]) ??
+        this._extractCategoryValue(data, categoryKeys[cat]);
 
-      if (inputRatings[cat] && inputRatings[cat][metric.key] !== undefined) {
-        val = Number(inputRatings[cat][metric.key]);
-      } else if (inputRatings[metric.key] !== undefined) {
-        val = Number(inputRatings[metric.key]);
+      // Category baseline on 0-10 scale
+      let categoryDefault = 10;
+      if (catVal !== undefined) {
+        if (catVal > 60) {
+          // Scale 0-100 to 0-10
+          categoryDefault = (Math.min(100, Math.max(0, catVal)) / 100) * 10;
+        } else if (catVal > 10) {
+          // In mobile UI, sliders are scored 0 - 60 pts
+          categoryDefault = (Math.min(60, Math.max(0, catVal)) / 60) * 10;
+        } else {
+          categoryDefault = Math.max(0, Math.min(10, catVal));
+        }
       }
 
-      if (isNaN(val)) val = 10;
-      val = Math.max(0, Math.min(10, Math.round(val * 10) / 10));
-      normalized[cat][metric.key] = val;
+      // Populate each metric under this category
+      const metrics = CATEGORY_METRICS[cat] || [];
+      for (const metric of metrics) {
+        let val = categoryDefault;
+
+        // Specific sub-metric overrides (nested in ratingsObj[cat], flat in ratingsObj, or root)
+        const nestedVal = ratingsObj[cat]?.[metric.key];
+        const flatRatingsVal = ratingsObj[metric.key];
+        const topVal = data[metric.key];
+
+        if (nestedVal !== undefined && nestedVal !== null && nestedVal !== '') {
+          const n = Number(nestedVal);
+          if (!isNaN(n)) val = n;
+        } else if (flatRatingsVal !== undefined && flatRatingsVal !== null && flatRatingsVal !== '') {
+          const n = Number(flatRatingsVal);
+          if (!isNaN(n)) val = n;
+        } else if (topVal !== undefined && topVal !== null && topVal !== '') {
+          const n = Number(topVal);
+          if (!isNaN(n)) val = n;
+        }
+
+        // Clamp between 0 and 10 and round to 1 decimal place
+        val = Math.max(0, Math.min(10, Math.round(Number(val) * 10) / 10));
+        normalized[cat][metric.key] = val;
+      }
     }
 
     return normalized;
@@ -99,31 +203,32 @@ export class EvaluationService {
     }
 
     const currentUserId = context.user?.id || context.user?.sub;
-    const currentUserRole = context.user?.role;
 
     const studentId = data.studentId;
-    if (!studentId) {
-      throw new ValidationError('studentId is required to submit coach evaluation');
+    if (!studentId || !mongoose.Types.ObjectId.isValid(studentId)) {
+      throw new ValidationError('Valid studentId is required to submit coach evaluation');
     }
 
     // Verify student exists in current tenant
-    const student = await User.findOne({ _id: studentId, tenantId, role: ROLES.STUDENT });
+    const student = await User.findOne({ _id: studentId, tenantId });
     if (!student) {
       throw new NotFoundError(`Student with ID '${studentId}' not found in this academy`);
     }
 
     // Determine coach ID
     let coachId = currentUserId;
-    if (data.coachId) {
-      // If admin or manager creates on behalf of a coach
+    if (data.coachId && mongoose.Types.ObjectId.isValid(data.coachId)) {
       const coach = await User.findOne({ _id: data.coachId, tenantId });
       if (coach) coachId = coach._id;
     }
 
     // Resolve batch (if provided or from active enrollment)
-    let batchId = data.batchId || null;
-    let branchId = data.branchId || student.branchId || context.branchId || null;
-    let sportId = data.sportId || null;
+    let batchId = data.batchId && mongoose.Types.ObjectId.isValid(data.batchId) ? data.batchId : null;
+    let branchId =
+      data.branchId && mongoose.Types.ObjectId.isValid(data.branchId)
+        ? data.branchId
+        : student.branchId || context.branchId || null;
+    let sportId = data.sportId && mongoose.Types.ObjectId.isValid(data.sportId) ? data.sportId : null;
 
     if (batchId) {
       const batch = await Batch.findOne({ _id: batchId, tenantId });
@@ -141,8 +246,17 @@ export class EvaluationService {
       }
     }
 
-    // Normalize ratings
-    const ratings = this._normalizeRatings(data.ratings || data);
+    // Parse evaluation date safely
+    let evalDate = new Date();
+    if (data.evaluationDate) {
+      const parsed = new Date(data.evaluationDate);
+      if (!isNaN(parsed.getTime())) {
+        evalDate = parsed;
+      }
+    }
+
+    // Normalize ratings from category sliders or detailed metric inputs
+    const ratings = this._normalizeRatings(data);
     const summary = computeEvaluationSummary(ratings);
 
     const evaluation = new Evaluation({
@@ -155,10 +269,14 @@ export class EvaluationService {
       academyName: data.academyName || DEFAULT_ACADEMY_NAME,
       title: data.title || 'Coach Performance Assessment & Feedback',
       period: data.period || '',
-      evaluationDate: data.evaluationDate ? new Date(data.evaluationDate) : new Date(),
+      evaluationDate: evalDate,
       ratings,
       summary,
-      strengths: Array.isArray(data.strengths) ? data.strengths : data.strengths ? [data.strengths] : [],
+      strengths: Array.isArray(data.strengths)
+        ? data.strengths
+        : data.strengths
+          ? [data.strengths]
+          : [],
       areasForImprovement: Array.isArray(data.areasForImprovement)
         ? data.areasForImprovement
         : data.areasForImprovement
@@ -195,29 +313,48 @@ export class EvaluationService {
       throw new AuthorizationError('You can only edit your own student evaluations');
     }
 
-    if (data.ratings || data.physical || data.mental || data.skill || data.attitude) {
-      const mergedRatings = {
-        physical: { ...(evaluation.ratings?.physical?.toObject?.() || evaluation.ratings?.physical || {}), ...(data.ratings?.physical || data.physical || {}) },
-        mental: { ...(evaluation.ratings?.mental?.toObject?.() || evaluation.ratings?.mental || {}), ...(data.ratings?.mental || data.mental || {}) },
-        skill: { ...(evaluation.ratings?.skill?.toObject?.() || evaluation.ratings?.skill || {}), ...(data.ratings?.skill || data.skill || {}) },
-        attitude: { ...(evaluation.ratings?.attitude?.toObject?.() || evaluation.ratings?.attitude || {}), ...(data.ratings?.attitude || data.attitude || {}) },
+    if (
+      data.ratings ||
+      data.physical ||
+      data.mental ||
+      data.skill ||
+      data.attitude ||
+      data.physicalScore ||
+      data.mentalScore ||
+      data.skillScore ||
+      data.attitudeScore
+    ) {
+      const current = evaluation.ratings?.toObject ? evaluation.ratings.toObject() : evaluation.ratings || {};
+      const updated = this._normalizeRatings(data);
+      evaluation.ratings = {
+        physical: { ...(current.physical || {}), ...(updated.physical || {}) },
+        mental: { ...(current.mental || {}), ...(updated.mental || {}) },
+        skill: { ...(current.skill || {}), ...(updated.skill || {}) },
+        attitude: { ...(current.attitude || {}), ...(updated.attitude || {}) },
       };
-      evaluation.ratings = this._normalizeRatings(mergedRatings);
       evaluation.summary = computeEvaluationSummary(evaluation.ratings);
     }
 
     if (data.academyName !== undefined) evaluation.academyName = data.academyName;
     if (data.title !== undefined) evaluation.title = data.title;
     if (data.period !== undefined) evaluation.period = data.period;
-    if (data.evaluationDate !== undefined) evaluation.evaluationDate = new Date(data.evaluationDate);
-    if (data.strengths !== undefined) evaluation.strengths = Array.isArray(data.strengths) ? data.strengths : [data.strengths];
+    if (data.evaluationDate !== undefined) {
+      const parsed = new Date(data.evaluationDate);
+      if (!isNaN(parsed.getTime())) evaluation.evaluationDate = parsed;
+    }
+    if (data.strengths !== undefined) {
+      evaluation.strengths = Array.isArray(data.strengths) ? data.strengths : data.strengths ? [data.strengths] : [];
+    }
     if (data.areasForImprovement !== undefined) {
       evaluation.areasForImprovement = Array.isArray(data.areasForImprovement)
         ? data.areasForImprovement
-        : [data.areasForImprovement];
+        : data.areasForImprovement
+          ? [data.areasForImprovement]
+          : [];
     }
     if (data.coachRemarks !== undefined) evaluation.coachRemarks = data.coachRemarks.trim();
     if (data.feedback !== undefined) evaluation.coachRemarks = data.feedback.trim();
+    if (data.remarks !== undefined) evaluation.coachRemarks = data.remarks.trim();
     if (data.status !== undefined) evaluation.status = data.status;
 
     await evaluation.save();
@@ -318,16 +455,23 @@ export class EvaluationService {
 
     const query = { tenantId };
 
-    if (filters.studentId) query.studentId = filters.studentId;
-    if (filters.coachId) query.coachId = filters.coachId;
-    if (filters.batchId) query.batchId = filters.batchId;
-    if (filters.branchId) query.branchId = filters.branchId;
+    if (filters.studentId && mongoose.Types.ObjectId.isValid(filters.studentId)) query.studentId = filters.studentId;
+    if (filters.coachId && mongoose.Types.ObjectId.isValid(filters.coachId)) query.coachId = filters.coachId;
+    if (filters.batchId && mongoose.Types.ObjectId.isValid(filters.batchId)) query.batchId = filters.batchId;
+    if (filters.branchId && mongoose.Types.ObjectId.isValid(filters.branchId)) query.branchId = filters.branchId;
     if (filters.status) query.status = filters.status;
 
     if (filters.dateFrom || filters.dateTo) {
       query.evaluationDate = {};
-      if (filters.dateFrom) query.evaluationDate.$gte = new Date(filters.dateFrom);
-      if (filters.dateTo) query.evaluationDate.$lte = new Date(filters.dateTo);
+      if (filters.dateFrom && !isNaN(new Date(filters.dateFrom).getTime())) {
+        query.evaluationDate.$gte = new Date(filters.dateFrom);
+      }
+      if (filters.dateTo && !isNaN(new Date(filters.dateTo).getTime())) {
+        query.evaluationDate.$lte = new Date(filters.dateTo);
+      }
+      if (Object.keys(query.evaluationDate).length === 0) {
+        delete query.evaluationDate;
+      }
     }
 
     const [items, total] = await Promise.all([
@@ -379,7 +523,7 @@ export class EvaluationService {
       throw new ValidationError('Tenant context is required');
     }
 
-    const student = await User.findOne({ _id: studentId, tenantId, role: ROLES.STUDENT })
+    const student = await User.findOne({ _id: studentId, tenantId })
       .select('-password')
       .lean();
 
