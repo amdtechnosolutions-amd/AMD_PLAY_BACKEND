@@ -259,7 +259,53 @@ export class EvaluationService {
     const ratings = this._normalizeRatings(data);
     const summary = computeEvaluationSummary(ratings);
 
-    const evaluation = new Evaluation({
+    // Check if an existing evaluation exists to UPDATE instead of creating a duplicate
+    let evaluation = null;
+    const explicitId = data.id || data._id || data.evaluationId;
+    if (explicitId && mongoose.Types.ObjectId.isValid(explicitId)) {
+      evaluation = await Evaluation.findOne({ _id: explicitId, tenantId });
+    }
+
+    if (!evaluation) {
+      // Find existing evaluation for this student in this batch/tenant
+      const query = { tenantId, studentId };
+      if (batchId) query.batchId = batchId;
+      evaluation = await Evaluation.findOne(query).sort({ evaluationDate: -1, createdAt: -1 });
+    }
+
+    if (evaluation) {
+      // UPDATE EXISTING RECORD IN-PLACE
+      evaluation.ratings = ratings;
+      evaluation.summary = summary;
+      evaluation.evaluationDate = evalDate;
+      evaluation.coachId = coachId;
+      if (batchId) evaluation.batchId = batchId;
+      if (branchId) evaluation.branchId = branchId;
+      if (sportId) evaluation.sportId = sportId;
+      if (data.academyName) evaluation.academyName = data.academyName;
+      if (data.title) evaluation.title = data.title;
+      if (data.period !== undefined) evaluation.period = data.period;
+      if (data.strengths) {
+        evaluation.strengths = Array.isArray(data.strengths)
+          ? data.strengths
+          : [data.strengths];
+      }
+      if (data.areasForImprovement) {
+        evaluation.areasForImprovement = Array.isArray(data.areasForImprovement)
+          ? data.areasForImprovement
+          : [data.areasForImprovement];
+      }
+      if (data.coachRemarks || data.feedback || data.remarks) {
+        evaluation.coachRemarks = (data.coachRemarks || data.feedback || data.remarks).trim();
+      }
+      if (data.status) evaluation.status = data.status;
+
+      await evaluation.save();
+      return await this.getEvaluationById(evaluation._id, context);
+    }
+
+    // If no existing record found, CREATE NEW
+    evaluation = new Evaluation({
       tenantId,
       branchId,
       studentId,
@@ -441,7 +487,9 @@ export class EvaluationService {
   }
 
   /**
-   * List evaluations with filters and pagination
+   * List evaluations with filters and pagination.
+   * By default, groups by studentId to return only the latest evaluation record per student,
+   * preventing duplicate cards for the same student on the screen.
    */
   async listEvaluations(filters = {}, pagination = {}, context = {}) {
     const tenantId = context.tenantId;
@@ -449,17 +497,31 @@ export class EvaluationService {
       throw new ValidationError('Tenant context is required');
     }
 
-    const page = pagination.page || 1;
-    const limit = pagination.limit || 20;
+    const page = Number(pagination.page) || 1;
+    const limit = Number(pagination.limit) || 20;
     const skip = (page - 1) * limit;
 
-    const query = { tenantId };
+    const query = {
+      tenantId: mongoose.Types.ObjectId.isValid(tenantId)
+        ? new mongoose.Types.ObjectId(tenantId)
+        : tenantId,
+    };
 
-    if (filters.studentId && mongoose.Types.ObjectId.isValid(filters.studentId)) query.studentId = filters.studentId;
-    if (filters.coachId && mongoose.Types.ObjectId.isValid(filters.coachId)) query.coachId = filters.coachId;
-    if (filters.batchId && mongoose.Types.ObjectId.isValid(filters.batchId)) query.batchId = filters.batchId;
-    if (filters.branchId && mongoose.Types.ObjectId.isValid(filters.branchId)) query.branchId = filters.branchId;
-    if (filters.status) query.status = filters.status;
+    if (filters.studentId && mongoose.Types.ObjectId.isValid(filters.studentId)) {
+      query.studentId = new mongoose.Types.ObjectId(filters.studentId);
+    }
+    if (filters.coachId && mongoose.Types.ObjectId.isValid(filters.coachId)) {
+      query.coachId = new mongoose.Types.ObjectId(filters.coachId);
+    }
+    if (filters.batchId && mongoose.Types.ObjectId.isValid(filters.batchId)) {
+      query.batchId = new mongoose.Types.ObjectId(filters.batchId);
+    }
+    if (filters.branchId && mongoose.Types.ObjectId.isValid(filters.branchId)) {
+      query.branchId = new mongoose.Types.ObjectId(filters.branchId);
+    }
+    if (filters.status) {
+      query.status = filters.status;
+    }
 
     if (filters.dateFrom || filters.dateTo) {
       query.evaluationDate = {};
@@ -474,17 +536,83 @@ export class EvaluationService {
       }
     }
 
-    const [items, total] = await Promise.all([
-      Evaluation.find(query)
-        .populate('studentId', 'firstName lastName employeeNo cardNo phone')
-        .populate('coachId', 'firstName lastName')
-        .populate('batchId', 'name code')
-        .sort({ evaluationDate: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean(),
-      Evaluation.countDocuments(query),
-    ]);
+    // Support search by student name or regNo
+    if (filters.search || filters.q) {
+      const searchTerm = String(filters.search || filters.q).trim();
+      if (searchTerm) {
+        const regex = new RegExp(searchTerm, 'i');
+        const matchingStudents = await User.find({
+          tenantId,
+          $or: [
+            { firstName: regex },
+            { lastName: regex },
+            { employeeNo: regex },
+            { phone: regex },
+          ],
+        }).select('_id');
+        const matchedIds = matchingStudents.map((s) => new mongoose.Types.ObjectId(s._id));
+        if (query.studentId) {
+          if (!matchedIds.some((id) => id.equals(query.studentId))) {
+            return { items: [], pagination: { page, limit, total: 0, totalPages: 0 } };
+          }
+        } else {
+          query.studentId = { $in: matchedIds };
+        }
+      }
+    }
+
+    const showAllHistory = filters.allHistory === true || filters.allHistory === 'true';
+
+    let items = [];
+    let total = 0;
+
+    if (showAllHistory) {
+      // Detailed raw history without deduplication
+      [items, total] = await Promise.all([
+        Evaluation.find(query)
+          .populate('studentId', 'firstName lastName employeeNo cardNo phone metadata branchId')
+          .populate('coachId', 'firstName lastName email phone')
+          .populate('batchId', 'name code level schedule')
+          .populate('sportId', 'name slug')
+          .populate('branchId', 'name code')
+          .sort({ evaluationDate: -1, createdAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .lean(),
+        Evaluation.countDocuments(query),
+      ]);
+    } else {
+      // Deduplicate by studentId: Each student appears ONCE with their latest evaluation
+      const pipeline = [
+        { $match: query },
+        { $sort: { evaluationDate: -1, createdAt: -1 } },
+        {
+          $group: {
+            _id: '$studentId',
+            doc: { $first: '$$ROOT' },
+          },
+        },
+        { $replaceRoot: { newRoot: '$doc' } },
+        { $sort: { evaluationDate: -1, createdAt: -1 } },
+      ];
+
+      const countResult = await Evaluation.aggregate([...pipeline, { $count: 'total' }]);
+      total = countResult[0]?.total || 0;
+
+      const groupedDocs = await Evaluation.aggregate([
+        ...pipeline,
+        { $skip: skip },
+        { $limit: limit },
+      ]);
+
+      items = await Evaluation.populate(groupedDocs, [
+        { path: 'studentId', select: 'firstName lastName employeeNo cardNo phone metadata branchId' },
+        { path: 'coachId', select: 'firstName lastName email phone' },
+        { path: 'batchId', select: 'name code level schedule' },
+        { path: 'sportId', select: 'name slug' },
+        { path: 'branchId', select: 'name code' },
+      ]);
+    }
 
     return {
       items,
