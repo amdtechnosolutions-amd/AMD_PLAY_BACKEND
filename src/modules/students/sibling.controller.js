@@ -69,7 +69,14 @@ export class SiblingController {
   async unlinkSibling(req, reply) {
     const context = this._extractContext(req);
     const result = await siblingService.unlinkSibling(req.params.id, context);
-    return reply.status(200).send(apiSuccess(result));
+    return reply.status(200).send(
+      apiSuccess({
+        message: result.message || 'Student unlinked from sibling group successfully',
+        data: {
+          studentId: result.studentId,
+        },
+      })
+    );
   }
 }
 
