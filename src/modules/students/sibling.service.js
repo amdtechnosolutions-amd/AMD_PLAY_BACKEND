@@ -275,7 +275,7 @@ export class SiblingService {
   }
 
   /**
-   * Link two or more students as siblings (even if they have different mobile numbers)
+   * Link existing students as siblings manually using Master Student ID and New Student ID
    */
   async linkSiblings(data, context = {}) {
     const tenantId = context.tenantId;
@@ -283,16 +283,32 @@ export class SiblingService {
       throw new ValidationError('Tenant context is required');
     }
 
+    // Resolve master / primary student ID
+    const masterId =
+      data.masterStudentId ||
+      data.primaryStudentId ||
+      data.studentId ||
+      data.id;
+
+    // Resolve new / sibling student ID
+    const newId =
+      data.newStudentId ||
+      data.siblingStudentId ||
+      data.siblingId ||
+      data.targetStudentId;
+
     const studentIds = [];
-    if (data.studentId) studentIds.push(data.studentId);
-    if (data.siblingStudentId) studentIds.push(data.siblingStudentId);
+    if (masterId) studentIds.push(masterId);
+    if (newId) studentIds.push(newId);
     if (Array.isArray(data.studentIds)) {
       studentIds.push(...data.studentIds);
     }
 
     const uniqueIds = [...new Set(studentIds.filter((id) => mongoose.Types.ObjectId.isValid(id)))];
     if (uniqueIds.length < 2) {
-      throw new ValidationError('At least 2 valid student IDs are required to establish a sibling relationship');
+      throw new ValidationError(
+        'Both Master Student ID and New Student ID (masterStudentId and newStudentId) are required to link siblings'
+      );
     }
 
     const students = await User.find({
@@ -304,38 +320,51 @@ export class SiblingService {
       throw new NotFoundError('One or more students not found in this academy');
     }
 
-    // Determine target siblingGroupId: reuse existing if any student already has one, or generate new
-    let targetGroupId = students.find((s) => s.siblingGroupId)?.siblingGroupId;
+    // Locate the master student
+    const masterStudent =
+      (masterId && students.find((s) => s._id.toString() === masterId.toString())) ||
+      students[0];
+
+    // Determine target siblingGroupId: prefer master student's siblingGroupId
+    let targetGroupId =
+      masterStudent.siblingGroupId ||
+      students.find((s) => s.siblingGroupId)?.siblingGroupId;
+
     if (!targetGroupId) {
       targetGroupId = new mongoose.Types.ObjectId();
     }
 
+    // Automatically inherit family contacts from master student (no need for user to input them!)
     const familyPhone =
       data.familyPhone ||
       data.parentPhone ||
-      students.find((s) => s.metadata?.parentPhone)?.metadata?.parentPhone ||
-      students[0].phone ||
+      masterStudent.metadata?.parentPhone ||
+      masterStudent.phone ||
       '';
 
     const parentName =
       data.parentName ||
-      students.find((s) => s.metadata?.parentName)?.metadata?.parentName ||
+      masterStudent.metadata?.parentName ||
       '';
 
-    // Update all target students to share the common siblingGroupId
+    // Update all target students to share the master student's siblingGroupId
     await Promise.all(
       students.map(async (student) => {
         student.siblingGroupId = targetGroupId;
         student.metadata = student.metadata || {};
         student.metadata.siblingGroupId = targetGroupId.toString();
         student.metadata.isSibling = true;
-        if (parentName) student.metadata.parentName = parentName;
-        if (familyPhone && !student.metadata.parentPhone) student.metadata.parentPhone = familyPhone;
+        if (parentName && !student.metadata.parentName) {
+          student.metadata.parentName = parentName;
+        }
+        if (familyPhone && !student.metadata.parentPhone) {
+          student.metadata.parentPhone = familyPhone;
+        }
         await student.save();
       })
     );
 
-    return await this.getStudentSiblings(uniqueIds[0], context);
+    return await this.getStudentSiblings(masterStudent._id, context);
   }
 
   /**
@@ -460,3 +489,4 @@ export class SiblingService {
 }
 
 export const siblingService = new SiblingService();
+

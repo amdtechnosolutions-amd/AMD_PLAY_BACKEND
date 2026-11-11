@@ -43,8 +43,8 @@ export class SiblingController {
   async linkSiblings(req, reply) {
     const context = this._extractContext(req);
     const body = { ...req.body };
-    if (req.params?.id && !body.studentId) {
-      body.studentId = req.params.id;
+    if (req.params?.id && !body.masterStudentId && !body.studentId) {
+      body.masterStudentId = req.params.id;
     }
     const result = await siblingService.linkSiblings(body, context);
     return reply.status(200).send(
@@ -74,3 +74,4 @@ export class SiblingController {
 }
 
 export const siblingController = new SiblingController();
+

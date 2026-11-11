@@ -29,18 +29,17 @@ export const studentSiblingsParamSchema = {
 };
 
 export const linkSiblingsSchema = {
-  description: '[Roles: tenant_admin, branch_manager, coach] Link two or more students as siblings under the same family group',
+  description: '[Roles: tenant_admin, branch_manager, coach] Link existing students as siblings manually using Master Student ID and New Student ID',
   tags: ['Students Management', 'Sibling Profiles'],
   security: [{ bearerAuth: [] }],
   body: {
     type: 'object',
     properties: {
-      studentId: { type: 'string', description: 'Primary student ID' },
-      siblingStudentId: { type: 'string', description: 'Sibling student ID to link' },
-      studentIds: { type: 'array', items: { type: 'string' }, description: 'Array of student IDs to link into the family group' },
-      familyPhone: { type: 'string', description: 'Optional common family contact phone' },
-      parentPhone: { type: 'string', description: 'Optional parent phone' },
-      parentName: { type: 'string', description: 'Optional parent/guardian name' },
+      masterStudentId: { type: 'string', description: 'Master / Primary Student User ID' },
+      newStudentId: { type: 'string', description: 'New / Sibling Student User ID to link with master student' },
+      studentId: { type: 'string', description: 'Alias for masterStudentId' },
+      siblingStudentId: { type: 'string', description: 'Alias for newStudentId' },
+      studentIds: { type: 'array', items: { type: 'string' }, description: 'Optional array of student IDs to link into the family group' },
     },
     additionalProperties: true,
   },
@@ -68,3 +67,4 @@ export const assignSiblingPhoneSchema = {
     additionalProperties: true,
   },
 };
+
