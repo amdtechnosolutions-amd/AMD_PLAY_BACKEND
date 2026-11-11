@@ -1,6 +1,13 @@
 import { coachingController } from './coaching.controller.js';
 import { automatedAttendanceController } from './automated-attendance.controller.js';
 import { evaluationController } from './evaluation.controller.js';
+import { siblingController } from '../students/sibling.controller.js';
+import {
+  listSiblingGroupsSchema,
+  studentSiblingsParamSchema,
+  linkSiblingsSchema,
+  assignSiblingPhoneSchema,
+} from '../students/sibling.schema.js';
 import {
   createBatchSchema,
   updateBatchSchema,
@@ -107,6 +114,37 @@ export default async function coachingRoutes(fastify) {
     },
     preHandler: [fastify.authenticate, requireTenantContext],
     handler: coachingController.uploadFace.bind(coachingController),
+  });
+
+  // --- Sibling Family Records & CRUD Operations (Coaching API Aliases) ---
+  fastify.get('/coaching/siblings', {
+    schema: listSiblingGroupsSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: siblingController.listSiblingGroups.bind(siblingController),
+  });
+
+  fastify.post('/coaching/siblings', {
+    schema: linkSiblingsSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: siblingController.linkSiblings.bind(siblingController),
+  });
+
+  fastify.get('/coaching/students/:id/siblings', {
+    schema: studentSiblingsParamSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: siblingController.getStudentSiblings.bind(siblingController),
+  });
+
+  fastify.patch('/coaching/students/:id/sibling-phone', {
+    schema: assignSiblingPhoneSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: siblingController.assignSiblingPhone.bind(siblingController),
+  });
+
+  fastify.delete('/coaching/students/:id/siblings', {
+    schema: studentSiblingsParamSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: siblingController.unlinkSibling.bind(siblingController),
   });
 
   fastify.post('/coaching/attendance', {

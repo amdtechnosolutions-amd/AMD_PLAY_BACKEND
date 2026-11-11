@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { BaseService } from '../../core/BaseService.js';
 import {
   batchRepository,
@@ -483,21 +484,64 @@ export class CoachingService extends BaseService {
 
       // Look up existing user by studentId, employeeNo, cardNo, explicit email, or phone
       let existingUser = null;
+      let matchedSibling = null;
       if (data.employeeNo && data.employeeNo.trim()) {
         existingUser = await userRepository.findOne({ tenantId, employeeNo: data.employeeNo.trim() });
       } else if (data.cardNo && data.cardNo.trim()) {
         existingUser = await userRepository.findOne({ tenantId, cardNo: data.cardNo.trim() });
-      } else if (data.email && data.email.trim()) {
+      } else if (data.email && data.email.trim() && !data.email.includes('@amdplay.local')) {
         existingUser = await userRepository.findOne({ tenantId, email: data.email.toLowerCase().trim() });
-      } else if (data.phone && data.phone.trim()) {
-        const cleanPhone = data.phone.trim();
-        const digits = cleanPhone.replace(/\D/g, '');
-        const phoneVariants = [cleanPhone];
-        if (digits.length === 10) phoneVariants.push(digits, `+91${digits}`, `91${digits}`);
-        existingUser = await userRepository.findOne({
+      }
+
+      // Check phone or explicit sibling link
+      const cleanPhone = (data.phone || data.parentPhone || '').trim();
+      const digits = cleanPhone.replace(/\D/g, '');
+      const phoneVariants = [cleanPhone];
+      if (digits.length === 10) phoneVariants.push(digits, `+91${digits}`, `91${digits}`);
+
+      // If an explicit sibling is provided
+      if (data.siblingStudentId && mongoose.Types.ObjectId.isValid(data.siblingStudentId)) {
+        matchedSibling = await userRepository.findOne({ _id: data.siblingStudentId, tenantId });
+      }
+
+      if (!existingUser && cleanPhone) {
+        const candidateUsers = await userRepository.model.find({
           tenantId,
-          phone: { $in: phoneVariants },
+          $or: [
+            { phone: { $in: phoneVariants } },
+            { 'metadata.parentPhone': { $in: phoneVariants } },
+          ],
         });
+
+        if (candidateUsers && candidateUsers.length > 0) {
+          const inputFirst = (data.firstName || '').trim().toLowerCase();
+          const inputLast = (data.lastName || '').trim().toLowerCase();
+          const inputFull = `${inputFirst} ${inputLast}`.trim();
+
+          const exactMatch = candidateUsers.find((u) => {
+            const uFirst = (u.firstName || '').trim().toLowerCase();
+            const uLast = (u.lastName || '').trim().toLowerCase();
+            const uFull = `${uFirst} ${uLast}`.trim();
+            return uFull === inputFull || (inputLast ? false : uFirst === inputFirst);
+          });
+
+          if (exactMatch) {
+            existingUser = exactMatch;
+          } else {
+            const existingStudent = candidateUsers.find((u) => u.role === ROLES.STUDENT);
+            if (existingStudent) {
+              // SIBLING AUTO-CALCULATION: Another student is already enrolled with this phone!
+              // Create a brand new student record for the new child and link them as siblings
+              matchedSibling = matchedSibling || existingStudent;
+              existingUser = null;
+            } else {
+              const customerUser = candidateUsers.find((u) => u.role === ROLES.CUSTOMER);
+              if (customerUser) {
+                existingUser = customerUser;
+              }
+            }
+          }
+        }
       }
 
       // Auto-generate biometric credentials if not provided (e.g. isabd001)
@@ -590,11 +634,40 @@ export class CoachingService extends BaseService {
 
       const email = (data.email || `student_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}@amdplay.local`).toLowerCase().trim();
 
+      // Resolve or allocate Sibling Group ID if matchedSibling exists
+      let siblingGroupToAssign = null;
+      const siblingTarget = matchedSibling;
+      if (siblingTarget) {
+        if (siblingTarget.siblingGroupId) {
+          siblingGroupToAssign = siblingTarget.siblingGroupId;
+        } else if (siblingTarget.metadata?.siblingGroupId && mongoose.Types.ObjectId.isValid(siblingTarget.metadata.siblingGroupId)) {
+          siblingGroupToAssign = new mongoose.Types.ObjectId(siblingTarget.metadata.siblingGroupId);
+          siblingTarget.siblingGroupId = siblingGroupToAssign;
+          await siblingTarget.save();
+        } else {
+          siblingGroupToAssign = new mongoose.Types.ObjectId();
+          siblingTarget.siblingGroupId = siblingGroupToAssign;
+          siblingTarget.metadata = siblingTarget.metadata || {};
+          siblingTarget.metadata.siblingGroupId = siblingGroupToAssign.toString();
+          siblingTarget.metadata.isSibling = true;
+          if (cleanPhone && !siblingTarget.metadata.parentPhone) siblingTarget.metadata.parentPhone = cleanPhone;
+          if (data.parentName && !siblingTarget.metadata.parentName) siblingTarget.metadata.parentName = data.parentName;
+          await siblingTarget.save();
+        }
+      }
+
       if (existingUser) {
         student = existingUser;
         let needsSave = false;
         if (student.role !== ROLES.STUDENT && student.role === ROLES.CUSTOMER) {
           student.role = ROLES.STUDENT;
+          needsSave = true;
+        }
+        if (siblingGroupToAssign && !student.siblingGroupId) {
+          student.siblingGroupId = siblingGroupToAssign;
+          student.metadata = student.metadata || {};
+          student.metadata.siblingGroupId = siblingGroupToAssign.toString();
+          student.metadata.isSibling = true;
           needsSave = true;
         }
         if (!student.employeeNo) {
@@ -639,17 +712,20 @@ export class CoachingService extends BaseService {
           employeeNo: finalEmployeeNo,
           cardNo: finalCardNo,
           pin: finalPin,
+          siblingGroupId: siblingGroupToAssign,
           metadata: {
             sportId: data.sportId || null,
             branchId: data.branchId || null,
             batchId: data.batchId || null,
-            parentName: data.parentName || '',
-            parentPhone: data.parentPhone || '',
+            parentName: data.parentName || siblingTarget?.metadata?.parentName || '',
+            parentPhone: data.parentPhone || cleanPhone || siblingTarget?.phone || '',
             skillLevel: data.skillLevel || 'beginner',
             gender: data.gender || '',
             dateOfBirth: data.dateOfBirth || '',
-            address: data.address || '',
+            address: data.address || siblingTarget?.metadata?.address || '',
             pin: finalPin,
+            siblingGroupId: siblingGroupToAssign ? siblingGroupToAssign.toString() : null,
+            isSibling: Boolean(siblingGroupToAssign),
           },
         });
       }
@@ -871,7 +947,11 @@ export class CoachingService extends BaseService {
         employeeNo: student.employeeNo,
         cardNo: student.cardNo,
         pin: student.pin,
+        siblingGroupId: student.siblingGroupId || null,
+        isSibling: Boolean(student.siblingGroupId),
       },
+      isSibling: Boolean(student.siblingGroupId),
+      siblingGroupId: student.siblingGroupId || null,
       enrollment,
       deviceUpload: deviceUploadResult,
     };

@@ -1,7 +1,14 @@
 import { studentController } from './student.controller.js';
+import { siblingController } from './sibling.controller.js';
 import { evaluationController } from '../coaching/evaluation.controller.js';
 import { createEvaluationSchema } from '../coaching/evaluation.schema.js';
 import { adminResetPasswordSchema } from '../auth/auth.schema.js';
+import {
+  listSiblingGroupsSchema,
+  studentSiblingsParamSchema,
+  linkSiblingsSchema,
+  assignSiblingPhoneSchema,
+} from './sibling.schema.js';
 import {
   createStudentSchema,
   queryStudentsSchema,
@@ -200,6 +207,61 @@ export default async function studentRoutes(fastify) {
         data: result,
       });
     },
+  });
+
+  // --- Sibling Family Records & CRUD Operations ---
+  // List all sibling families in academy
+  fastify.get('/students/siblings', {
+    schema: listSiblingGroupsSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: siblingController.listSiblingGroups.bind(siblingController),
+  });
+
+  // Link two or more students as siblings
+  fastify.post('/students/siblings', {
+    schema: linkSiblingsSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: siblingController.linkSiblings.bind(siblingController),
+  });
+
+  // Get full sibling profiles for a specific student
+  fastify.get('/students/:id/siblings', {
+    schema: studentSiblingsParamSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: siblingController.getStudentSiblings.bind(siblingController),
+  });
+
+  // Link a sibling directly to student :id
+  fastify.post('/students/:id/siblings', {
+    schema: linkSiblingsSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: siblingController.linkSiblings.bind(siblingController),
+  });
+
+  // Assign or update a different mobile number for a sibling student while keeping them in the family group
+  fastify.patch('/students/siblings/:id', {
+    schema: assignSiblingPhoneSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: siblingController.assignSiblingPhone.bind(siblingController),
+  });
+
+  fastify.patch('/students/:id/sibling-phone', {
+    schema: assignSiblingPhoneSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: siblingController.assignSiblingPhone.bind(siblingController),
+  });
+
+  // Unlink a student from their sibling family group
+  fastify.delete('/students/:id/siblings', {
+    schema: studentSiblingsParamSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: siblingController.unlinkSibling.bind(siblingController),
+  });
+
+  fastify.delete('/students/siblings/:id', {
+    schema: studentSiblingsParamSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: siblingController.unlinkSibling.bind(siblingController),
   });
 }
 

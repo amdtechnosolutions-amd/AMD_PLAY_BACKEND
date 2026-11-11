@@ -75,6 +75,11 @@ const userSchema = new mongoose.Schema(
       trim: true,
       default: '',
     },
+    siblingGroupId: {
+      type: mongoose.Schema.Types.ObjectId,
+      index: true,
+      default: null,
+    },
     metadata: {
       type: mongoose.Schema.Types.Mixed,
       default: {},
@@ -91,6 +96,7 @@ const userSchema = new mongoose.Schema(
 // Compound Indexes ensuring email uniqueness per tenant and fast phone/tenant lookup
 userSchema.index({ tenantId: 1, email: 1 }, { unique: true });
 userSchema.index({ tenantId: 1, phone: 1 });
+userSchema.index({ tenantId: 1, siblingGroupId: 1 });
 userSchema.index({ tenantId: 1, role: 1, status: 1 });
 userSchema.index({ tenantId: 1, branchId: 1, role: 1 });
 userSchema.index({ tenantId: 1, employeeNo: 1 });

@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { userRepository } from '../users/user.repository.js';
 import { User } from '../users/user.model.js';
 import { Enrollment } from '../coaching/enrollment.model.js';
@@ -535,35 +536,54 @@ export class AuthService {
 
     const enrollments = await Enrollment.find({ studentId: user._id, status: 'active' }).populate('batchId');
 
-    // Retrieve sibling profiles if user has phone registered
+    // Retrieve sibling profiles if user has phone or siblingGroupId registered
     let siblings = [];
-    if (user.phone && user.tenantId) {
-      const siblingDocs = await User.find({
-        tenantId: user.tenantId,
-        phone: user.phone,
-        _id: { $ne: user._id },
-        role: ROLES.STUDENT,
-        status: 'active',
-      }).select('-password');
+    if (user.tenantId) {
+      const siblingCriteria = [];
+      if (user.siblingGroupId) siblingCriteria.push({ siblingGroupId: user.siblingGroupId });
+      if (user.metadata?.siblingGroupId && mongoose.Types.ObjectId.isValid(user.metadata.siblingGroupId)) {
+        siblingCriteria.push({ siblingGroupId: new mongoose.Types.ObjectId(user.metadata.siblingGroupId) });
+      }
+      if (user.phone) {
+        siblingCriteria.push({ phone: user.phone });
+        siblingCriteria.push({ 'metadata.parentPhone': user.phone });
+      }
+      if (user.metadata?.parentPhone) {
+        siblingCriteria.push({ phone: user.metadata.parentPhone });
+        siblingCriteria.push({ 'metadata.parentPhone': user.metadata.parentPhone });
+      }
 
-      siblings = await Promise.all(
-        siblingDocs.map(async (st) => {
-          const sEnrollments = await Enrollment.find({ studentId: st._id, status: 'active' }).populate('batchId');
-          return {
-            id: st._id,
-            studentId: st._id,
-            regNo: st.employeeNo || '',
-            tenantId: st.tenantId,
-            role: st.role || 'student',
-            firstName: st.firstName,
-            lastName: st.lastName,
-            fullName: `${st.firstName} ${st.lastName || ''}`.trim(),
-            employeeNo: st.employeeNo,
-            cardNo: st.cardNo,
-            enrollments: sEnrollments,
-          };
-        })
-      );
+      if (siblingCriteria.length > 0) {
+        const siblingDocs = await User.find({
+          tenantId: user.tenantId,
+          _id: { $ne: user._id },
+          role: ROLES.STUDENT,
+          status: 'active',
+          $or: siblingCriteria,
+        }).select('-password');
+
+        siblings = await Promise.all(
+          siblingDocs.map(async (st) => {
+            const sEnrollments = await Enrollment.find({ studentId: st._id, status: 'active' }).populate('batchId');
+            return {
+              id: st._id,
+              studentId: st._id,
+              regNo: st.employeeNo || '',
+              tenantId: st.tenantId,
+              role: st.role || 'student',
+              firstName: st.firstName,
+              lastName: st.lastName,
+              fullName: `${st.firstName} ${st.lastName || ''}`.trim(),
+              employeeNo: st.employeeNo,
+              cardNo: st.cardNo,
+              phone: st.phone,
+              siblingGroupId: st.siblingGroupId || user.siblingGroupId || null,
+              parentPhone: st.metadata?.parentPhone || user.metadata?.parentPhone || user.phone || '',
+              enrollments: sEnrollments,
+            };
+          })
+        );
+      }
     }
 
     const payload = {
@@ -609,12 +629,26 @@ export class AuthService {
       throw new AuthenticationError('Active student session is required');
     }
 
+    const siblingCriteria = [];
+    if (currentUser.siblingGroupId) siblingCriteria.push({ siblingGroupId: currentUser.siblingGroupId });
+    if (currentUser.metadata?.siblingGroupId && mongoose.Types.ObjectId.isValid(currentUser.metadata.siblingGroupId)) {
+      siblingCriteria.push({ siblingGroupId: new mongoose.Types.ObjectId(currentUser.metadata.siblingGroupId) });
+    }
+    if (currentUser.phone) {
+      siblingCriteria.push({ phone: currentUser.phone });
+      siblingCriteria.push({ 'metadata.parentPhone': currentUser.phone });
+    }
+    if (currentUser.metadata?.parentPhone) {
+      siblingCriteria.push({ phone: currentUser.metadata.parentPhone });
+      siblingCriteria.push({ 'metadata.parentPhone': currentUser.metadata.parentPhone });
+    }
+
     const targetStudent = await User.findOne({
       _id: targetStudentId,
       tenantId: currentUser.tenantId,
-      phone: currentUser.phone,
       role: ROLES.STUDENT,
       status: 'active',
+      $or: siblingCriteria,
     });
 
     if (!targetStudent) {

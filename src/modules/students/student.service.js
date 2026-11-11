@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { User } from '../users/user.model.js';
 import { Enrollment } from '../coaching/enrollment.model.js';
 import { Attendance } from '../coaching/attendance.model.js';
@@ -340,16 +341,36 @@ export class StudentService {
   async getMySiblings(context = {}) {
     const userId = context.user?.id || context.user?.sub;
     const user = await User.findById(userId);
-    if (!user || !user.phone || !user.tenantId) {
+    if (!user || !user.tenantId) {
+      return [];
+    }
+
+    const siblingCriteria = [];
+    if (user.siblingGroupId) {
+      siblingCriteria.push({ siblingGroupId: user.siblingGroupId });
+    }
+    if (user.metadata?.siblingGroupId && mongoose.Types.ObjectId.isValid(user.metadata.siblingGroupId)) {
+      siblingCriteria.push({ siblingGroupId: new mongoose.Types.ObjectId(user.metadata.siblingGroupId) });
+    }
+    if (user.phone) {
+      siblingCriteria.push({ phone: user.phone });
+      siblingCriteria.push({ 'metadata.parentPhone': user.phone });
+    }
+    if (user.metadata?.parentPhone) {
+      siblingCriteria.push({ phone: user.metadata.parentPhone });
+      siblingCriteria.push({ 'metadata.parentPhone': user.metadata.parentPhone });
+    }
+
+    if (siblingCriteria.length === 0) {
       return [];
     }
 
     const siblings = await User.find({
       tenantId: user.tenantId,
-      phone: user.phone,
       _id: { $ne: user._id },
       role: ROLES.STUDENT,
       status: 'active',
+      $or: siblingCriteria,
     }).select('-password');
 
     return await Promise.all(
@@ -365,6 +386,8 @@ export class StudentService {
           cardNo: st.cardNo,
           phone: st.phone,
           email: st.email,
+          siblingGroupId: st.siblingGroupId || user.siblingGroupId || null,
+          parentPhone: st.metadata?.parentPhone || user.metadata?.parentPhone || user.phone || '',
           enrollments,
         };
       })
