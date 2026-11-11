@@ -476,4 +476,40 @@ Both `/students` and `/coaching` route prefixes are fully supported for backward
 | `DELETE /api/v1/students/siblings/:id` | `DELETE /api/v1/students/:id/siblings` & `DELETE /api/v1/coaching/students/:id/siblings` |
 
 ---
+
+## 9. Why Multiple Students Appear Under the Same Family Group
+
+### The Auto-Grouping Rule
+Students belong to the same family group (`siblingGroupId`) in two ways:
+
+1. **Direct Phone Link**:
+   - Two students were registered with the exact same phone number or parent phone number (e.g. `9894789477`).
+   - The system automatically assigns them a shared `siblingGroupId`.
+
+2. **Transitive Chain via Sibling Phone Assignment**:
+   - **Step A:** Student 1 (`keshika devan`, `9894789477`) and Student 2 (`RUTHVI PANDIAN`, `9894789477`) are linked under family group `6af4929053cf12c1662f4b5a`.
+   - **Step B:** Student 2 (`RUTHVI PANDIAN`) is assigned their own personal phone number `9444154854` using `PATCH /students/siblings/:id`.
+   - **Step C:** A new student, Student 3 (`Keshika Arun`), is registered with phone number `9444154854`.
+   - **Result:** Because Student 3 was registered with `9444154854` (which belongs to Student 2 in family `6af4929053cf12c1662f4b5a`), the Auto-Calculation Engine assumes Student 3 is another child in Student 2's family and automatically places them into the same family group!
+
+```mermaid
+graph LR
+  S1["Student 1: keshika devan<br/>Phone: 9894789477"] ---|"Linked as Sibling"| S2["Student 2: RUTHVI PANDIAN<br/>Assigned Phone: 9444154854"]
+  S2 ---|"New Student registered with same 9444154854"| S3["Student 3: Keshika Arun<br/>Phone: 9444154854"]
+  
+  S1 -.-> Group["Shared Family Group: 6af4929053cf12c1662f4b5a<br/>(3 Siblings)"]
+  S2 -.-> Group
+  S3 -.-> Group
+```
+
+### How to Unlink / Separate a Student from the Family
+If Student 3 (`Keshika Arun`) is **not** a sibling and should be independent:
+- **API Call:**
+  ```http
+  DELETE https://www.amdplayapi.amdtechno.in/api/v1/students/siblings/6af4a0dfa04eca3b90eb24c3
+  Authorization: Bearer <TOKEN>
+  ```
+- **Result:** Student 3 is immediately detached and removed from that family card, leaving only the genuine siblings in the group.
+
+---
 *Created for AMD Sports SaaS Platform - Sibling API Specification*
