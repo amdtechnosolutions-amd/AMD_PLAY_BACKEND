@@ -512,4 +512,175 @@ If Student 3 (`Keshika Arun`) is **not** a sibling and should be independent:
 - **Result:** Student 3 is immediately detached and removed from that family card, leaving only the genuine siblings in the group.
 
 ---
+
+## 10. How to Get Scorecards for Both Siblings in the Mobile App
+
+When a parent or student logs into the Mobile App, here are the two standard methods to fetch and display evaluation scorecards for **BOTH** siblings:
+
+---
+
+### Method A: Seamless Profile Switcher (Recommended for Mobile App)
+
+This is the primary flow used in the student mobile app. Tapping another child in the top profile switcher immediately switches the active session token, allowing all subsequent screens (Evaluations, Attendance, Monthly Fees) to automatically display that child's data.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor Parent as Parent / Student
+  participant App as Mobile App
+  participant API as Backend Server
+
+  Parent->>App: Login with family phone or regNo (e.g. isabd003)
+  App->>API: POST /api/v1/auth/student/login
+  API-->>App: Returns Token 1 + Siblings List [Ruthvi Pandian (ID: 6af1e2ae...)]
+
+  Note over App: Load Child 1 Scorecard
+  App->>API: GET /api/v1/students/my/evaluations/latest (Bearer Token 1)
+  API-->>App: Child 1 Scorecard (Total Score, Radar Chart, 24 Metrics)
+
+  Parent->>App: Taps profile switcher and selects "Ruthvi Pandian"
+  App->>API: POST /api/v1/auth/student/switch-profile {"studentId": "6af1e2ae185e913f71898a76"}
+  API-->>App: Returns Token 2 (Active Child is now Ruthvi)
+
+  Note over App: Load Child 2 Scorecard
+  App->>API: GET /api/v1/students/my/evaluations/latest (Bearer Token 2)
+  API-->>App: Child 2 Scorecard (Total Score, Radar Chart, 24 Metrics)
+```
+
+#### Step 1: Login
+- **Endpoint:** `POST https://www.amdplayapi.amdtechno.in/api/v1/auth/student/login`
+- **Payload:**
+  ```json
+  {
+    "identifier": "9894789477",
+    "password": "Isa@123"
+  }
+  ```
+- **Response (`200 OK`):**
+  ```json
+  {
+    "success": true,
+    "data": {
+      "accessToken": "eyJhbGciOi...",
+      "studentId": "6ae3bfa56989d6280874ef35",
+      "user": {
+        "firstName": "keshika",
+        "regNo": "isabd003",
+        "siblings": [
+          {
+            "studentId": "6af1e2ae185e913f71898a76",
+            "fullName": "RUTHVI PANDIAN",
+            "regNo": "isabd006"
+          }
+        ]
+      }
+    }
+  }
+  ```
+
+#### Step 2: Fetch Child 1's Scorecard
+- **Endpoint:** `GET https://www.amdplayapi.amdtechno.in/api/v1/students/my/evaluations/latest`
+- **Headers:** `Authorization: Bearer <TOKEN_1>`
+
+#### Step 3: Switch Active Child in Mobile App
+When the parent selects the sibling (*"RUTHVI PANDIAN"*), call:
+- **Endpoint:** `POST https://www.amdplayapi.amdtechno.in/api/v1/auth/student/switch-profile`
+- **Headers:** `Authorization: Bearer <TOKEN_1>`, `Content-Type: application/json`
+- **Payload:**
+  ```json
+  {
+    "studentId": "6af1e2ae185e913f71898a76"
+  }
+  ```
+  *(Note: `targetStudentId` is also supported as an alias).*
+- **Response (`200 OK`):**
+  ```json
+  {
+    "success": true,
+    "message": "Switched to sibling student profile successfully",
+    "data": {
+      "accessToken": "eyJhbGciOi...NEW_TOKEN_FOR_RUTHVI...",
+      "studentId": "6af1e2ae185e913f71898a76",
+      "user": {
+        "firstName": "RUTHVI",
+        "lastName": "PANDIAN",
+        "regNo": "isabd006"
+      }
+    }
+  }
+  ```
+
+#### Step 4: Fetch Child 2's Scorecard
+Using the new `accessToken` returned from Step 3:
+- **Endpoint:** `GET https://www.amdplayapi.amdtechno.in/api/v1/students/my/evaluations/latest`
+- **Headers:** `Authorization: Bearer <NEW_TOKEN_FOR_RUTHVI>`
+- **Response (`200 OK`):** Returns Ruthvi's scorecard, 24 individual parameters, category scores, and radar stats.
+
+---
+
+### Method B: Direct Query by Student ID (Without Switching Token)
+
+If the mobile app has a dashboard screen that wants to show **both scorecards side-by-side** simultaneously on the same screen:
+
+- **Fetch Child 1 Scorecard:**
+  ```http
+  GET https://www.amdplayapi.amdtechno.in/api/v1/students/6ae3bfa56989d6280874ef35/evaluations/latest
+  Authorization: Bearer <CURRENT_TOKEN>
+  ```
+- **Fetch Child 2 Scorecard:**
+  ```http
+  GET https://www.amdplayapi.amdtechno.in/api/v1/students/6af1e2ae185e913f71898a76/evaluations/latest
+  Authorization: Bearer <CURRENT_TOKEN>
+  ```
+
+---
+
+### Complete Scorecard Response Structure
+
+```json
+{
+  "success": true,
+  "message": "Latest evaluation report retrieved",
+  "data": {
+    "studentId": {
+      "_id": "6af1e2ae185e913f71898a76",
+      "firstName": "RUTHVI",
+      "lastName": "PANDIAN",
+      "employeeNo": "isabd006"
+    },
+    "batchId": {
+      "name": "Evening Badminton Stars"
+    },
+    "title": "Coach Performance Assessment & Feedback",
+    "evaluationDate": "2026-11-11",
+    "period": "November 2026",
+    "summary": {
+      "overallScore": 191.5,
+      "overallMaxScore": 240,
+      "overallPercentage": 79.8,
+      "performanceLevel": "Good",
+      "grade": "B",
+      "categoryScores": {
+        "physical": { "score": 26, "maxScore": 50, "percentage": 52 },
+        "mental": { "score": 43.5, "maxScore": 50, "percentage": 87 },
+        "skill": { "score": 80, "maxScore": 80, "percentage": 100 },
+        "attitude": { "score": 42, "maxScore": 60, "percentage": 70 }
+      }
+    },
+    "radarData": [
+      { "category": "Physical", "score": 26, "max": 50, "percentage": 52 },
+      { "category": "Mental", "score": 43.5, "max": 50, "percentage": 87 },
+      { "category": "Technical", "score": 80, "max": 80, "percentage": 100 },
+      { "category": "Attitude", "score": 42, "max": 60, "percentage": 70 }
+    ],
+    "parameterCards": [
+      { "key": "agility", "label": "Agility & Court Coverage", "score": 5, "maxScore": 10 },
+      { "key": "smash", "label": "Smash Accuracy & Power", "score": 10, "maxScore": 10 }
+    ],
+    "coachRemarks": "Excellent technical execution; continue working on physical conditioning."
+  }
+}
+```
+
+---
 *Created for AMD Sports SaaS Platform - Sibling API Specification*
