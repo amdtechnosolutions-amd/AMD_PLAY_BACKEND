@@ -68,7 +68,8 @@ export class AuthController {
   }
 
   async switchStudentProfile(request, reply) {
-    const authResult = await this.authService.switchStudentProfile(request.body.targetStudentId, {
+    const targetStudentId = request.body.targetStudentId || request.body.studentId;
+    const authResult = await this.authService.switchStudentProfile(targetStudentId, {
       user: request.user,
       tenantId: request.tenantId || request.user?.tenantId,
     });

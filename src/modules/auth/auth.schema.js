@@ -107,10 +107,11 @@ export const switchStudentProfileSchema = {
   security: [{ bearerAuth: [] }],
   body: {
     type: 'object',
-    required: ['targetStudentId'],
     properties: {
       targetStudentId: { type: 'string', minLength: 24, maxLength: 24, description: 'Sibling Student ID to switch session into' },
+      studentId: { type: 'string', minLength: 24, maxLength: 24, description: 'Alias for targetStudentId' },
     },
+    additionalProperties: true,
   },
 };
 
