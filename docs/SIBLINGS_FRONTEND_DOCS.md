@@ -20,6 +20,10 @@
 | 5 | **Assign / Update Sibling Phone** | `PATCH` | `/students/siblings/:id` | `tenant_admin`, `branch_manager`, `coach` |
 | 6 | **Unlink Student from Sibling Group** | `DELETE` | `/students/siblings/:id` | `tenant_admin`, `branch_manager`, `coach` |
 | 7 | **Auto-Link on Registration** | `POST` | `/students` | `tenant_admin`, `branch_manager`, `coach` |
+| 8 | **All Sibling Monthly Fees (Dashboard / Payments)** | `GET` | `/students/my/fees` | `student` |
+| 9 | **Sibling-Wise Payments & Financial Breakdown** | `GET` | `/students/my/payments` | `student` |
+| 10 | **Sibling Group Payments & Dues by Group/Phone** | `GET` | `/students/siblings/payments` | `tenant_admin`, `branch_manager`, `coach`, `student` |
+| 11 | **Student & Siblings Scorecards** | `GET` | `/students/:id/evaluations/latest` | `tenant_admin`, `branch_manager`, `coach`, `student` |
 
 ---
 
@@ -852,6 +856,232 @@ When parents or students switch between siblings in the dashboard (`Home` / `Pay
       }
     }
   ]
+}
+```
+
+---
+
+## 12. Sibling-Wise Payments & Fee Financial Breakdown for Mobile App
+
+For mobile screens (e.g. **Payments Tab**, **Sibling Fee Cards**, or **Parent Billing Summary**), this endpoint delivers a fully aggregated, child-by-child financial breakdown for the entire family.
+
+### Key Capabilities
+1. **Per-Child Financial Summaries**:
+   - Each sibling card includes their own `summary`: `totalAmount`, `totalPaid`, `totalPending`, `invoiceCount`, `paidCount`, and `pendingCount`.
+2. **Dedicated Fee Invoices & Payment Receipts per Child**:
+   - Under each sibling object, `fees` holds all monthly invoices (pending, overdue, paid) and `payments` holds all verified ledger transactions/receipts for that child.
+3. **Family Overview**:
+   - Top-level `summary` aggregates the total family obligation, paid amount, pending balance, and total transactions across all siblings.
+4. **Zero-Configuration Calling**:
+   - When calling with any active student/parent Bearer token, the system automatically detects all linked siblings in the family group.
+
+---
+
+### Available Endpoints & Methods
+
+| # | Endpoint URL | Method | Description |
+|---|---|:---:|---|
+| **A** | `https://www.amdplayapi.amdtechno.in/api/v1/students/my/payments` | `GET` | **Recommended**: Direct sibling-wise payments breakdown for logged-in student/parent session |
+| **B** | `https://www.amdplayapi.amdtechno.in/api/v1/students/my/fees?groupBy=sibling` | `GET` | Sibling-wise grouped format on the standard `/my/fees` route |
+| **C** | `https://www.amdplayapi.amdtechno.in/api/v1/students/siblings/payments` | `GET` | Family lookup by `?studentId=...`, `?familyPhone=...`, or `?siblingGroupId=...` |
+| **D** | `https://www.amdplayapi.amdtechno.in/api/v1/students/:id/payments` | `GET` | Specific student payment history with family siblings breakdown |
+
+---
+
+### Request Details
+- **Method:** `GET`
+- **URL:** `https://www.amdplayapi.amdtechno.in/api/v1/students/my/payments`
+- **Headers:**
+  ```http
+  Authorization: Bearer <TOKEN>
+  ```
+
+---
+
+### Success Response (`200 OK`)
+
+```json
+{
+  "success": true,
+  "message": "Personal and sibling payment records retrieved successfully",
+  "data": {
+    "familyPhone": "9894789477",
+    "parentName": "arunmozhidevan",
+    "siblingGroupId": "6af4929053cf12c1662f4b5a",
+    "totalStudents": 2,
+    "summary": {
+      "totalAmount": 7500,
+      "totalPaid": 7500,
+      "totalPending": 0,
+      "totalInvoices": 3,
+      "paidInvoices": 3,
+      "pendingInvoices": 0,
+      "paymentTransactions": 3
+    },
+    "siblings": [
+      {
+        "studentId": "6ae3bfa56989d6280874ef35",
+        "_id": "6ae3bfa56989d6280874ef35",
+        "firstName": "keshika",
+        "lastName": "devan",
+        "fullName": "keshika devan",
+        "regNo": "isabd003",
+        "employeeNo": "isabd003",
+        "phone": "9894789477",
+        "parentPhone": "9894789477",
+        "parentName": "arunmozhidevan",
+        "summary": {
+          "totalAmount": 5000,
+          "totalPaid": 5000,
+          "totalPending": 0,
+          "invoiceCount": 2,
+          "paidCount": 2,
+          "pendingCount": 0,
+          "paymentTransactionCount": 2
+        },
+        "fees": [
+          {
+            "_id": "6ae535a941a64984822e1c89",
+            "studentId": "6ae3bfa56989d6280874ef35",
+            "studentName": "keshika devan",
+            "studentRegNo": "isabd003",
+            "month": 11,
+            "year": 2026,
+            "baseFee": 2500,
+            "finalAmount": 2500,
+            "paidAmount": 2500,
+            "status": "paid",
+            "receiptNo": "REC-STU-202611-7128",
+            "paidAt": "2026-11-11T20:25:02.474Z",
+            "batchName": "kids_begineer",
+            "batchDisplayName": "kids_begineer (keshika devan)",
+            "batchId": {
+              "_id": "6ae3be5a51203568f13cc0e5",
+              "name": "kids_begineer"
+            },
+            "sportId": {
+              "_id": "6ad6bdead33a91a36c41ff5b",
+              "name": "Badminton"
+            }
+          },
+          {
+            "_id": "6ae532e1b2d71308812c19f1",
+            "studentId": "6ae3bfa56989d6280874ef35",
+            "studentName": "keshika devan",
+            "studentRegNo": "isabd003",
+            "month": 10,
+            "year": 2026,
+            "baseFee": 2500,
+            "finalAmount": 2500,
+            "paidAmount": 2500,
+            "status": "paid",
+            "receiptNo": "REC-STU-202610-5201",
+            "paidAt": "2026-10-31T20:25:02.474Z",
+            "batchName": "kids_begineer",
+            "batchDisplayName": "kids_begineer (keshika devan)",
+            "batchId": {
+              "_id": "6ae3be5a51203568f13cc0e5",
+              "name": "kids_begineer"
+            },
+            "sportId": {
+              "_id": "6ad6bdead33a91a36c41ff5b",
+              "name": "Badminton"
+            }
+          }
+        ],
+        "payments": [
+          {
+            "_id": "6af4cf1ea04eca3b90eb2d16",
+            "studentId": "6ae3bfa56989d6280874ef35",
+            "studentName": "keshika devan",
+            "studentRegNo": "isabd003",
+            "amount": 2500,
+            "currency": "INR",
+            "type": "coaching",
+            "paymentMethod": "upi",
+            "status": "success",
+            "referenceId": "6ae535a941a64984822e1c89",
+            "createdAt": "2026-11-11T20:25:02.474Z"
+          },
+          {
+            "_id": "6af4cf3ca04eca3b90eb2d3a",
+            "studentId": "6ae3bfa56989d6280874ef35",
+            "studentName": "keshika devan",
+            "studentRegNo": "isabd003",
+            "amount": 2500,
+            "currency": "INR",
+            "type": "coaching",
+            "paymentMethod": "upi",
+            "status": "success",
+            "referenceId": "6ae532e1b2d71308812c19f1",
+            "createdAt": "2026-10-31T20:25:02.474Z"
+          }
+        ]
+      },
+      {
+        "studentId": "6af1e2ae185e913f71898a76",
+        "_id": "6af1e2ae185e913f71898a76",
+        "firstName": "RUTHVI",
+        "lastName": "PANDIAN",
+        "fullName": "RUTHVI PANDIAN",
+        "regNo": "isabd006",
+        "employeeNo": "isabd006",
+        "phone": "9444154854",
+        "parentPhone": "9894789477",
+        "parentName": "arunmozhidevan",
+        "summary": {
+          "totalAmount": 2500,
+          "totalPaid": 2500,
+          "totalPending": 0,
+          "invoiceCount": 1,
+          "paidCount": 1,
+          "pendingCount": 0,
+          "paymentTransactionCount": 1
+        },
+        "fees": [
+          {
+            "_id": "6af1e2ae185e913f71898a7e",
+            "studentId": "6af1e2ae185e913f71898a76",
+            "studentName": "RUTHVI PANDIAN",
+            "studentRegNo": "isabd006",
+            "month": 11,
+            "year": 2026,
+            "baseFee": 2500,
+            "finalAmount": 2500,
+            "paidAmount": 2500,
+            "status": "paid",
+            "receiptNo": "REC-STU-202611-7129",
+            "paidAt": "2026-11-11T20:25:02.474Z",
+            "batchName": "kids_begineer",
+            "batchDisplayName": "kids_begineer (RUTHVI PANDIAN)",
+            "batchId": {
+              "_id": "6ae3be5a51203568f13cc0e5",
+              "name": "kids_begineer"
+            },
+            "sportId": {
+              "_id": "6ad6bdead33a91a36c41ff5b",
+              "name": "Badminton"
+            }
+          }
+        ],
+        "payments": [
+          {
+            "_id": "6af1e37a185e913f71898ad7",
+            "studentId": "6af1e2ae185e913f71898a76",
+            "studentName": "RUTHVI PANDIAN",
+            "studentRegNo": "isabd006",
+            "amount": 2500,
+            "currency": "INR",
+            "type": "coaching",
+            "paymentMethod": "upi",
+            "status": "success",
+            "referenceId": "6af1e2ae185e913f71898a7e",
+            "createdAt": "2026-11-11T20:25:02.474Z"
+          }
+        ]
+      }
+    ]
+  }
 }
 ```
 

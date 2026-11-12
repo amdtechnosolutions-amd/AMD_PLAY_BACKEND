@@ -4,6 +4,7 @@ import { Enrollment } from '../coaching/enrollment.model.js';
 import { Attendance } from '../coaching/attendance.model.js';
 import { AttendancePunchLog } from '../coaching/attendance-punch-log.model.js';
 import { MonthlyFee } from '../finance/monthly-fee.model.js';
+import { Payment } from '../finance/payment.model.js';
 import { Evaluation } from '../coaching/evaluation.model.js';
 import { Skill } from '../skills/skill.model.js';
 import { coachingService } from '../coaching/coaching.service.js';
@@ -396,14 +397,240 @@ export class StudentService {
 
   /**
    * Get logged-in student's monthly coaching fee invoices (Mobile App)
-   * Automatically aggregates all fees across all siblings in the family group
+   * Automatically aggregates all fees across all siblings in the family group.
+   * If query.groupBy === 'sibling', returns structured sibling-wise breakdown.
    */
   async getMyFees(context = {}) {
     const userId = context.user?.id || context.user?.sub;
     if (!userId) {
       throw new ValidationError('Authenticated student user is required');
     }
+    if (context.query?.groupBy === 'sibling' || context.query?.format === 'grouped') {
+      return await this.getStudentSiblingPayments(userId, context);
+    }
     return await this.getStudentFees(userId, { ...context, includeSiblings: true });
+  }
+
+  /**
+   * Get logged-in student's sibling-wise payments, fees & financial breakdown (Mobile App)
+   */
+  async getMyPayments(context = {}) {
+    const userId = context.user?.id || context.user?.sub;
+    if (!userId) {
+      throw new ValidationError('Authenticated student user is required');
+    }
+    return await this.getStudentSiblingPayments(userId, context);
+  }
+
+  /**
+   * Sibling group payments query by studentId, familyPhone, or siblingGroupId
+   */
+  async getSiblingPayments(context = {}) {
+    const query = context.query || {};
+    let targetUserId = query.studentId || context.user?.id || context.user?.sub;
+    if (!targetUserId && (query.familyPhone || query.siblingGroupId)) {
+      const matchCriteria = [];
+      if (query.siblingGroupId && mongoose.Types.ObjectId.isValid(query.siblingGroupId)) {
+        matchCriteria.push({ siblingGroupId: new mongoose.Types.ObjectId(query.siblingGroupId) });
+      }
+      if (query.familyPhone) {
+        matchCriteria.push({ phone: query.familyPhone });
+        matchCriteria.push({ 'metadata.parentPhone': query.familyPhone });
+      }
+      const st = await User.findOne({
+        tenantId: context.tenantId,
+        role: ROLES.STUDENT,
+        $or: matchCriteria,
+      });
+      if (st) {
+        targetUserId = st._id.toString();
+      }
+    }
+    if (!targetUserId) {
+      throw new ValidationError('studentId, familyPhone, or active student session is required');
+    }
+    return await this.getStudentSiblingPayments(targetUserId, context);
+  }
+
+  /**
+   * Complete sibling-wise breakdown of fees, ledger payments, and invoices
+   */
+  async getStudentSiblingPayments(id, context = {}) {
+    const tenantId = context.tenantId;
+    const currentUser = await User.findById(id).lean();
+    if (!currentUser) {
+      throw new NotFoundError('Student profile not found');
+    }
+
+    const siblingCriteria = [];
+    if (currentUser.siblingGroupId) {
+      siblingCriteria.push({ siblingGroupId: currentUser.siblingGroupId });
+    }
+    if (currentUser.metadata?.siblingGroupId && mongoose.Types.ObjectId.isValid(currentUser.metadata.siblingGroupId)) {
+      siblingCriteria.push({ siblingGroupId: new mongoose.Types.ObjectId(currentUser.metadata.siblingGroupId) });
+    }
+    if (currentUser.phone) {
+      siblingCriteria.push({ phone: currentUser.phone });
+      siblingCriteria.push({ 'metadata.parentPhone': currentUser.phone });
+    }
+    if (currentUser.metadata?.parentPhone) {
+      siblingCriteria.push({ phone: currentUser.metadata.parentPhone });
+      siblingCriteria.push({ 'metadata.parentPhone': currentUser.metadata.parentPhone });
+    }
+
+    let familyStudents = [currentUser];
+    if (siblingCriteria.length > 0) {
+      const docs = await User.find({
+        tenantId: currentUser.tenantId || tenantId,
+        role: ROLES.STUDENT,
+        status: 'active',
+        $or: siblingCriteria,
+      })
+        .select('_id firstName lastName employeeNo phone email metadata avatar cardNo')
+        .lean();
+
+      if (docs.length > 0) {
+        const studentMap = new Map();
+        studentMap.set(currentUser._id.toString(), currentUser);
+        for (const d of docs) {
+          studentMap.set(d._id.toString(), d);
+        }
+        familyStudents = Array.from(studentMap.values());
+      }
+    }
+
+    const studentIds = familyStudents.map((s) => s._id);
+
+    const [allFees, allPayments] = await Promise.all([
+      MonthlyFee.find({
+        tenantId: currentUser.tenantId || tenantId,
+        $or: [
+          { studentId: { $in: studentIds } },
+          { userId: { $in: studentIds } },
+        ],
+      })
+        .populate('batchId', 'name schedule code')
+        .populate('sportId', 'name icon')
+        .sort({ year: -1, month: -1, createdAt: -1 })
+        .lean(),
+      Payment.find({
+        tenantId: currentUser.tenantId || tenantId,
+        userId: { $in: studentIds },
+      })
+        .sort({ createdAt: -1 })
+        .lean(),
+    ]);
+
+    const siblings = familyStudents.map((st) => {
+      const sIdStr = st._id.toString();
+      const stFullName = `${st.firstName} ${st.lastName || ''}`.trim();
+      const stFees = allFees.filter(
+        (f) => (f.studentId?.toString() || f.userId?.toString()) === sIdStr
+      );
+      const stPayments = allPayments.filter(
+        (p) => p.userId?.toString() === sIdStr
+      );
+
+      const totalAmount = stFees.reduce((sum, f) => sum + (f.finalAmount || f.baseFee || 0), 0);
+      const totalPaid = stFees
+        .filter((f) => f.status === 'paid')
+        .reduce((sum, f) => sum + (f.paidAmount || f.finalAmount || 0), 0);
+      const totalPending = stFees
+        .filter((f) => f.status !== 'paid')
+        .reduce((sum, f) => sum + (f.finalAmount || 0), 0);
+
+      const paidCount = stFees.filter((f) => f.status === 'paid').length;
+      const pendingCount = stFees.filter((f) => f.status !== 'paid').length;
+
+      return {
+        studentId: sIdStr,
+        _id: sIdStr,
+        firstName: st.firstName,
+        lastName: st.lastName || '',
+        fullName: stFullName,
+        regNo: st.employeeNo || '',
+        employeeNo: st.employeeNo || '',
+        phone: st.phone || '',
+        cardNo: st.cardNo || '',
+        avatar: st.avatar || '',
+        parentPhone: st.metadata?.parentPhone || currentUser.metadata?.parentPhone || currentUser.phone || '',
+        parentName: st.metadata?.parentName || currentUser.metadata?.parentName || '',
+        summary: {
+          totalAmount,
+          totalPaid,
+          totalPending,
+          invoiceCount: stFees.length,
+          paidCount,
+          pendingCount,
+          paymentTransactionCount: stPayments.length,
+        },
+        fees: stFees.map((f) => {
+          const originalBatchName = f.batchId?.name || 'Monthly Coaching Fee';
+          return {
+            ...f,
+            studentId: sIdStr,
+            studentName: stFullName,
+            studentRegNo: st.employeeNo || '',
+            batchName: originalBatchName,
+            batchDisplayName: `${originalBatchName} (${stFullName})`,
+          };
+        }),
+        payments: stPayments.map((p) => ({
+          ...p,
+          studentId: sIdStr,
+          studentName: stFullName,
+          studentRegNo: st.employeeNo || '',
+        })),
+      };
+    });
+
+    const familyTotalAmount = siblings.reduce((sum, s) => sum + s.summary.totalAmount, 0);
+    const familyTotalPaid = siblings.reduce((sum, s) => sum + s.summary.totalPaid, 0);
+    const familyTotalPending = siblings.reduce((sum, s) => sum + s.summary.totalPending, 0);
+    const familyInvoiceCount = siblings.reduce((sum, s) => sum + s.summary.invoiceCount, 0);
+    const familyPaidCount = siblings.reduce((sum, s) => sum + s.summary.paidCount, 0);
+    const familyPendingCount = siblings.reduce((sum, s) => sum + s.summary.pendingCount, 0);
+
+    return {
+      familyPhone: currentUser.metadata?.parentPhone || currentUser.phone || '',
+      parentName: currentUser.metadata?.parentName || '',
+      siblingGroupId: currentUser.siblingGroupId || currentUser.metadata?.siblingGroupId || null,
+      totalStudents: familyStudents.length,
+      summary: {
+        totalAmount: familyTotalAmount,
+        totalPaid: familyTotalPaid,
+        totalPending: familyTotalPending,
+        totalInvoices: familyInvoiceCount,
+        paidInvoices: familyPaidCount,
+        pendingInvoices: familyPendingCount,
+        paymentTransactions: allPayments.length,
+      },
+      siblings,
+      allFees: allFees.map((fee) => {
+        const sIdStr = fee.studentId?.toString() || fee.userId?.toString();
+        const st = familyStudents.find((s) => s._id.toString() === sIdStr);
+        const name = st ? `${st.firstName} ${st.lastName || ''}`.trim() : 'Student';
+        const originalBatchName = fee.batchId?.name || 'Monthly Coaching Fee';
+        return {
+          ...fee,
+          studentId: sIdStr,
+          studentName: name,
+          studentRegNo: st?.employeeNo || '',
+          batchName: originalBatchName,
+          batchDisplayName: `${originalBatchName} (${name})`,
+        };
+      }),
+      allPayments: allPayments.map((p) => {
+        const sIdStr = p.userId?.toString();
+        const st = familyStudents.find((s) => s._id.toString() === sIdStr);
+        return {
+          ...p,
+          studentId: sIdStr,
+          studentName: st ? `${st.firstName} ${st.lastName || ''}`.trim() : 'Student',
+          studentRegNo: st?.employeeNo || '',
+        };
+      }),
+    };
   }
 
   /**

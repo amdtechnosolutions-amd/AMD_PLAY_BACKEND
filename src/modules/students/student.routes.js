@@ -84,12 +84,30 @@ export default async function studentRoutes(fastify) {
   // Logged-in Student personal monthly fee invoices for Mobile App
   fastify.get('/students/my/fees', {
     schema: {
-      description: '[Roles: student] Get personal monthly coaching fee dues and payment receipts',
+      description: '[Roles: student] Get personal monthly coaching fee dues and payment receipts (supports ?groupBy=sibling)',
+      tags: ['Students Management', 'Finance & Monthly Fees'],
+      security: [{ bearerAuth: [] }],
+      querystring: {
+        type: 'object',
+        properties: {
+          groupBy: { type: 'string', enum: ['sibling', 'none'], description: 'Group fees and payments by sibling profile' },
+          format: { type: 'string', description: 'Alternative alias for groupBy' },
+        },
+      },
+    },
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: studentController.getMyFees.bind(studentController),
+  });
+
+  // Logged-in Student sibling-wise payments, fees & transaction history for Mobile App
+  fastify.get('/students/my/payments', {
+    schema: {
+      description: '[Roles: student] Get consolidated sibling-wise payments, fee dues, and settled receipts for the entire family',
       tags: ['Students Management', 'Finance & Monthly Fees'],
       security: [{ bearerAuth: [] }],
     },
     preHandler: [fastify.authenticate, requireTenantContext],
-    handler: studentController.getMyFees.bind(studentController),
+    handler: studentController.getMyPayments.bind(studentController),
   });
 
   // Logged-in Student personal performance evaluation scorecard for Mobile App
@@ -162,6 +180,17 @@ export default async function studentRoutes(fastify) {
     handler: studentController.getFees.bind(studentController),
   });
 
+  // Student payments, fee invoices, and sibling-wise financial breakdown
+  fastify.get('/students/:id/payments', {
+    schema: {
+      ...studentParamSchema,
+      description: '[Roles: tenant_admin, branch_manager, coach, student] Get payments, fee invoices, and sibling-wise financial breakdown for a student',
+      tags: ['Students Management', 'Finance & Monthly Fees'],
+    },
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: studentController.getStudentPayments.bind(studentController),
+  });
+
   // Student performance evaluation scorecard reports for Coach, Admin, and Student
   fastify.get('/students/:id/evaluations', {
     schema: {
@@ -215,6 +244,25 @@ export default async function studentRoutes(fastify) {
     schema: listSiblingGroupsSchema,
     preHandler: [fastify.authenticate, requireTenantContext],
     handler: siblingController.listSiblingGroups.bind(siblingController),
+  });
+
+  // Consolidated sibling-wise payments and fee history for academy or specific sibling family
+  fastify.get('/students/siblings/payments', {
+    schema: {
+      description: '[Roles: tenant_admin, branch_manager, coach, student] Get sibling-wise fee dues, receipts, and payments breakdown by siblingGroupId, studentId, or familyPhone',
+      tags: ['Students Management', 'Finance & Monthly Fees'],
+      security: [{ bearerAuth: [] }],
+      querystring: {
+        type: 'object',
+        properties: {
+          studentId: { type: 'string', description: 'Student ID in family' },
+          siblingGroupId: { type: 'string', description: 'Sibling Group ID' },
+          familyPhone: { type: 'string', description: 'Parent / Family Phone' },
+        },
+      },
+    },
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: studentController.getSiblingPayments.bind(studentController),
   });
 
   // Link two or more students as siblings

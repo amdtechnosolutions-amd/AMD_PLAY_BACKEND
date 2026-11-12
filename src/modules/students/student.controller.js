@@ -150,6 +150,42 @@ export class StudentController {
     );
   }
 
+  async getMyPayments(req, reply) {
+    const context = this._extractContext(req);
+    context.query = req.query;
+    const payments = await studentService.getMyPayments(context);
+    return reply.status(200).send(
+      apiSuccess({
+        message: 'Personal and sibling payment records retrieved successfully',
+        data: payments,
+      })
+    );
+  }
+
+  async getSiblingPayments(req, reply) {
+    const context = this._extractContext(req);
+    context.query = req.query;
+    const payments = await studentService.getSiblingPayments(context);
+    return reply.status(200).send(
+      apiSuccess({
+        message: 'Sibling group payment records retrieved successfully',
+        data: payments,
+      })
+    );
+  }
+
+  async getStudentPayments(req, reply) {
+    const context = this._extractContext(req);
+    context.query = req.query;
+    const payments = await studentService.getStudentSiblingPayments(req.params.id, context);
+    return reply.status(200).send(
+      apiSuccess({
+        message: 'Student payment records retrieved successfully',
+        data: payments,
+      })
+    );
+  }
+
   async getFees(req, reply) {
     const context = this._extractContext(req);
     context.query = req.query;
