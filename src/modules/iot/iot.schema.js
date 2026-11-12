@@ -14,16 +14,16 @@ export const registerDeviceSchema = {
         enum: ['relay', 'door_lock', 'turnstile', 'biometric', 'biometric_terminal', 'access_control', 'sensor', 'gateway'],
         description: 'Device type (e.g. biometric for Hikvision access control)',
       },
-      sportId: { type: ['string', 'null'], nullable: true, description: 'Primary Assigned Sport ID' },
+      sportId: { type: ['string', 'null', 'object'], nullable: true, description: 'Primary Assigned Sport ID' },
       sportIds: {
         type: 'array',
-        items: { type: 'string' },
+        items: { type: ['string', 'object'] },
         description: 'Assigned Sport IDs (Device can serve multiple sports like Badminton + Squash)',
       },
-      resourceId: { type: ['string', 'null'], nullable: true, description: 'Primary Assigned Court / Resource ID' },
+      resourceId: { type: ['string', 'null', 'object'], nullable: true, description: 'Primary Assigned Court / Resource ID' },
       resourceIds: {
         type: 'array',
-        items: { type: 'string' },
+        items: { type: ['string', 'object'] },
         description: 'Assigned Court / Resource IDs (Device can serve multiple courts)',
       },
       accessScope: {
@@ -207,16 +207,16 @@ export const updateDeviceSchema = {
         enum: ['relay', 'door_lock', 'turnstile', 'biometric', 'biometric_terminal', 'access_control', 'sensor', 'gateway'],
         description: 'Device type',
       },
-      sportId: { type: ['string', 'null'], nullable: true, description: 'Primary Assigned Sport ID' },
+      sportId: { type: ['string', 'null', 'object'], nullable: true, description: 'Primary Assigned Sport ID' },
       sportIds: {
         type: 'array',
-        items: { type: 'string' },
+        items: { type: ['string', 'object'] },
         description: 'Assigned Sport IDs',
       },
-      resourceId: { type: ['string', 'null'], nullable: true, description: 'Primary Assigned Court / Resource ID' },
+      resourceId: { type: ['string', 'null', 'object'], nullable: true, description: 'Primary Assigned Court / Resource ID' },
       resourceIds: {
         type: 'array',
-        items: { type: 'string' },
+        items: { type: ['string', 'object'] },
         description: 'Assigned Court / Resource IDs',
       },
       accessScope: {

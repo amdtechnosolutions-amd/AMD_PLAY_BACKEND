@@ -6,6 +6,43 @@ import { HikvisionService } from './hikvision.service.js';
 import { ValidationError, NotFoundError, ConflictError } from '../../errors/AppError.js';
 import { logger } from '../../utils/logger.js';
 
+function extractObjectId(val) {
+  if (!val) return null;
+  if (typeof val === 'object') {
+    if (val._id) return extractObjectId(val._id);
+    if (val.id) return extractObjectId(val.id);
+    if (typeof val.toString === 'function') {
+      const s = val.toString();
+      if (/^[0-9a-fA-F]{24}$/.test(s)) return s;
+    }
+  }
+  if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if (/^[0-9a-fA-F]{24}$/.test(trimmed)) return trimmed;
+    const match = trimmed.match(/[0-9a-fA-F]{24}/);
+    if (match) return match[0];
+  }
+  return null;
+}
+
+function extractObjectIdArray(arr) {
+  if (!arr) return [];
+  if (!Array.isArray(arr)) {
+    const single = extractObjectId(arr);
+    return single ? [single] : [];
+  }
+  const result = [];
+  const seen = new Set();
+  for (const item of arr) {
+    const id = extractObjectId(item);
+    if (id && !seen.has(id)) {
+      seen.add(id);
+      result.push(id);
+    }
+  }
+  return result;
+}
+
 export class IotService {
   constructor() {
     this.deviceRepository = deviceRepository;
@@ -51,20 +88,23 @@ export class IotService {
       if (!port && p) port = Number(p);
     }
 
-    const sanitizedSportId = data.sportId && data.sportId !== '' ? data.sportId : null;
-    const sanitizedResourceId = data.resourceId && data.resourceId !== '' ? data.resourceId : null;
-    const sanitizedSportIds = Array.isArray(data.sportIds)
-      ? data.sportIds.filter((x) => x && x !== '')
-      : (sanitizedSportId ? [sanitizedSportId] : []);
-    const sanitizedResourceIds = Array.isArray(data.resourceIds)
-      ? data.resourceIds.filter((x) => x && x !== '')
-      : (sanitizedResourceId ? [sanitizedResourceId] : []);
+    const sanitizedSportId = extractObjectId(data.sportId);
+    const sanitizedResourceId = extractObjectId(data.resourceId);
+    const sanitizedSportIds = extractObjectIdArray(data.sportIds);
+    if (sanitizedSportId && !sanitizedSportIds.includes(sanitizedSportId)) {
+      sanitizedSportIds.push(sanitizedSportId);
+    }
+    const sanitizedResourceIds = extractObjectIdArray(data.resourceIds);
+    if (sanitizedResourceId && !sanitizedResourceIds.includes(sanitizedResourceId)) {
+      sanitizedResourceIds.push(sanitizedResourceId);
+    }
+    const sanitizedBranchId = extractObjectId(branchId);
 
     const payload = {
       ...data,
       code: deviceCode,
       tenantId,
-      branchId,
+      branchId: sanitizedBranchId,
       ipAddress: cleanIp,
       protocol: protocol || (port === 443 ? 'https' : 'http'),
       username: (data.username !== undefined && data.username !== null && data.username !== '') ? data.username : 'admin',
@@ -162,19 +202,31 @@ export class IotService {
 
     for (const field of allowedFields) {
       if (data[field] !== undefined) {
-        if ((field === 'resourceId' || field === 'sportId') && (data[field] === '' || !data[field])) {
-          device[field] = null;
-          if (field === 'resourceId' && data.resourceIds === undefined) {
-            device.resourceIds = [];
-          }
-          if (field === 'sportId' && data.sportIds === undefined) {
-            device.sportIds = [];
-          }
-        } else if ((field === 'resourceIds' || field === 'sportIds') && Array.isArray(data[field])) {
-          device[field] = data[field].filter((x) => x && x !== '');
+        if (field === 'sportId' || field === 'resourceId') {
+          const cleanId = extractObjectId(data[field]);
+          device[field] = cleanId;
+        } else if (field === 'sportIds' || field === 'resourceIds') {
+          device[field] = extractObjectIdArray(data[field]);
+        } else if (field === 'branchId') {
+          const cleanBranch = extractObjectId(data[field]);
+          if (cleanBranch) device[field] = cleanBranch;
         } else {
           device[field] = data[field];
         }
+      }
+    }
+
+    // Keep primary sportId in sync with sportIds array
+    if (device.sportIds && device.sportIds.length > 0) {
+      if (!device.sportId || !device.sportIds.some((id) => id.toString() === device.sportId.toString())) {
+        device.sportId = device.sportIds[0];
+      }
+    }
+
+    // Keep primary resourceId in sync with resourceIds array
+    if (device.resourceIds && device.resourceIds.length > 0) {
+      if (!device.resourceId || !device.resourceIds.some((id) => id.toString() === device.resourceId.toString())) {
+        device.resourceId = device.resourceIds[0];
       }
     }
 
