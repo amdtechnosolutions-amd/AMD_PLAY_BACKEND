@@ -402,3 +402,4 @@ Print or screenshot this table for quick field reference:
 | Fault LED                | Red = Router Disconnected; Cyan = Hotspot Active             |
 +--------------------------+--------------------------------------------------------------+
 ```
+
