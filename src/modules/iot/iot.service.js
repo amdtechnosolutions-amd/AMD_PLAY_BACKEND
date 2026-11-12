@@ -213,7 +213,7 @@ export class IotService {
     };
   }
 
-  async toggleRelayChannel(deviceId, { channelNumber, state }, context = {}) {
+  async toggleRelayChannel(deviceId, { channelNumber, state, target = null } = {}, context = {}) {
     const device = await this.deviceRepository.findById(deviceId, context.tenantId);
     if (!device) {
       throw new NotFoundError(`Device with ID '${deviceId}' not found`);
@@ -282,7 +282,7 @@ export class IotService {
 
     // Direct door control for Biometric Access Terminals (Hikvision)
     const isBiometricTerminal = device.type === 'biometric_terminal' || String(device.model || '').toLowerCase().includes('hikvision');
-    if (isBiometricTerminal && (normalizedState === 'on' || data.target === 'lock')) {
+    if (isBiometricTerminal && (normalizedState === 'on' || target === 'lock' || channel?.target === 'lock')) {
       const hikClient = HikvisionService.forDevice({
         ip: device.ipAddress,
         port: device.port,
@@ -509,9 +509,9 @@ export class IotService {
       channelNumber = resource.iotMapping.lightRelayChannel || 1;
     }
 
-    // 2. Fallback: Check if device directly references resourceId
+    // 2. Fallback: Check if device directly references resourceId (prioritizing smart relay controller)
     if (!device) {
-      device = await this.deviceRepository.findCourtDevice(resourceId, resolvedTenantId);
+      device = await this.deviceRepository.findCourtDevice(resourceId, resolvedTenantId, 'relay');
       if (device && Array.isArray(device.relayChannels) && device.relayChannels.length > 0) {
         channelNumber = device.relayChannels[0].channelNumber || 1;
       }
@@ -541,7 +541,15 @@ export class IotService {
       lightChannels.add(Number(resource.iotMapping.lightRelayChannel2));
     }
     if (lightChannels.size === 0) {
-      lightChannels.add(channelNumber || 1);
+      if (Array.isArray(device.relayChannels)) {
+        const configuredLights = device.relayChannels.filter((c) => c.target === 'light').map((c) => c.channelNumber);
+        if (configuredLights.length > 0) {
+          configuredLights.forEach((ch) => lightChannels.add(ch));
+        }
+      }
+      if (lightChannels.size === 0) {
+        lightChannels.add(channelNumber || 1);
+      }
     }
 
     // Toggle all light relay channels (supporting dual lights e.g. row 1 light 1 and light 2)

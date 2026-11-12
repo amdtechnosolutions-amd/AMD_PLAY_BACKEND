@@ -29,9 +29,18 @@ export class DeviceRepository extends BaseRepository {
       .lean();
   }
 
-  async findCourtDevice(resourceId, tenantId) {
+  async findCourtDevice(resourceId, tenantId, preferredType = 'relay') {
+    if (preferredType) {
+      const preferred = await this.model.findOne({
+        ...(tenantId ? { tenantId } : {}),
+        type: preferredType,
+        $or: [{ resourceId }, { resourceIds: resourceId }],
+      }).lean();
+      if (preferred) return preferred;
+    }
+
     return await this.model.findOne({
-      tenantId,
+      ...(tenantId ? { tenantId } : {}),
       $or: [{ resourceId }, { resourceIds: resourceId }],
     }).lean();
   }
