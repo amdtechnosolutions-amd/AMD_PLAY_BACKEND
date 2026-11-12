@@ -140,6 +140,7 @@ export class StudentController {
 
   async getMyFees(req, reply) {
     const context = this._extractContext(req);
+    context.query = req.query;
     const fees = await studentService.getMyFees(context);
     return reply.status(200).send(
       apiSuccess({
@@ -151,6 +152,7 @@ export class StudentController {
 
   async getFees(req, reply) {
     const context = this._extractContext(req);
+    context.query = req.query;
     const fees = await studentService.getStudentFees(req.params.id, context);
     return reply.status(200).send(
       apiSuccess({

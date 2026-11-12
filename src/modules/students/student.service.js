@@ -396,25 +396,144 @@ export class StudentService {
 
   /**
    * Get logged-in student's monthly coaching fee invoices (Mobile App)
+   * Automatically aggregates all fees across all siblings in the family group
    */
   async getMyFees(context = {}) {
     const userId = context.user?.id || context.user?.sub;
     if (!userId) {
       throw new ValidationError('Authenticated student user is required');
     }
-    return await this.getStudentFees(userId, context);
+    return await this.getStudentFees(userId, { ...context, includeSiblings: true });
   }
 
   /**
    * Get student monthly fee invoices
+   * When includeSiblings is true (or when accessed by student session),
+   * returns monthly fee invoices for both the student and all linked siblings
    */
   async getStudentFees(id, context = {}) {
     const tenantId = context.tenantId;
-    const fees = await MonthlyFee.find({ tenantId, studentId: id })
+    const isStudent = context.user?.role === ROLES.STUDENT;
+    const includeSiblings =
+      context.includeSiblings === true ||
+      (isStudent && context.query?.includeSiblings !== false && context.query?.includeSiblings !== 'false') ||
+      context.query?.includeSiblings === true ||
+      context.query?.includeSiblings === 'true';
+
+    let targetStudentIds = [id];
+    const studentMap = new Map();
+
+    const currentUser = await User.findById(id).lean();
+    if (currentUser) {
+      studentMap.set(currentUser._id.toString(), {
+        _id: currentUser._id,
+        id: currentUser._id.toString(),
+        studentId: currentUser._id.toString(),
+        firstName: currentUser.firstName,
+        lastName: currentUser.lastName || '',
+        fullName: `${currentUser.firstName} ${currentUser.lastName || ''}`.trim(),
+        regNo: currentUser.employeeNo || '',
+        employeeNo: currentUser.employeeNo || '',
+        phone: currentUser.phone || '',
+      });
+
+      if (includeSiblings) {
+        const siblingCriteria = [];
+        if (currentUser.siblingGroupId) {
+          siblingCriteria.push({ siblingGroupId: currentUser.siblingGroupId });
+        }
+        if (currentUser.metadata?.siblingGroupId && mongoose.Types.ObjectId.isValid(currentUser.metadata.siblingGroupId)) {
+          siblingCriteria.push({ siblingGroupId: new mongoose.Types.ObjectId(currentUser.metadata.siblingGroupId) });
+        }
+        if (currentUser.phone) {
+          siblingCriteria.push({ phone: currentUser.phone });
+          siblingCriteria.push({ 'metadata.parentPhone': currentUser.phone });
+        }
+        if (currentUser.metadata?.parentPhone) {
+          siblingCriteria.push({ phone: currentUser.metadata.parentPhone });
+          siblingCriteria.push({ 'metadata.parentPhone': currentUser.metadata.parentPhone });
+        }
+
+        if (siblingCriteria.length > 0) {
+          const siblingDocs = await User.find({
+            tenantId: currentUser.tenantId || tenantId,
+            role: ROLES.STUDENT,
+            status: 'active',
+            $or: siblingCriteria,
+          })
+            .select('_id firstName lastName employeeNo phone')
+            .lean();
+
+          for (const s of siblingDocs) {
+            const sIdStr = s._id.toString();
+            studentMap.set(sIdStr, {
+              _id: s._id,
+              id: sIdStr,
+              studentId: sIdStr,
+              firstName: s.firstName,
+              lastName: s.lastName || '',
+              fullName: `${s.firstName} ${s.lastName || ''}`.trim(),
+              regNo: s.employeeNo || '',
+              employeeNo: s.employeeNo || '',
+              phone: s.phone || '',
+            });
+          }
+          targetStudentIds = Array.from(studentMap.keys()).map((sid) => new mongoose.Types.ObjectId(sid));
+        }
+      }
+    }
+
+    const hasMultipleSiblings = targetStudentIds.length > 1;
+
+    const feeQuery = {
+      tenantId,
+      $or: [
+        { studentId: { $in: targetStudentIds } },
+        { userId: { $in: targetStudentIds } },
+      ],
+    };
+
+    const fees = await MonthlyFee.find(feeQuery)
       .populate('batchId', 'name schedule code')
       .populate('sportId', 'name icon')
-      .sort({ year: -1, month: -1 });
-    return fees;
+      .sort({ year: -1, month: -1, createdAt: -1 })
+      .lean();
+
+    return fees.map((fee) => {
+      const sIdStr = fee.studentId?.toString() || fee.userId?.toString();
+      const studentInfo = studentMap.get(sIdStr) || {
+        _id: sIdStr,
+        id: sIdStr,
+        studentId: sIdStr,
+        fullName: 'Student',
+        firstName: 'Student',
+        lastName: '',
+        regNo: '',
+        employeeNo: '',
+        phone: '',
+      };
+
+      const originalBatchName = fee.batchId?.name || 'Monthly Coaching Fee';
+      const displayName = hasMultipleSiblings
+        ? `${originalBatchName} (${studentInfo.fullName})`
+        : originalBatchName;
+
+      return {
+        ...fee,
+        studentId: sIdStr,
+        studentName: studentInfo.fullName,
+        studentRegNo: studentInfo.regNo,
+        student: studentInfo,
+        batchName: originalBatchName,
+        batchId: fee.batchId
+          ? {
+              ...fee.batchId,
+              name: displayName,
+              batchName: originalBatchName,
+            }
+          : fee.batchId,
+      };
+    });
   }
 }
 

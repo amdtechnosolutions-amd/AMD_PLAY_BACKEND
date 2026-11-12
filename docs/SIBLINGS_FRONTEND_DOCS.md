@@ -683,4 +683,177 @@ If the mobile app has a dashboard screen that wants to show **both scorecards si
 ```
 
 ---
+
+## 11. How to Show All Fees for Both Siblings in Mobile App Dashboard
+
+When parents or students switch between siblings in the dashboard (`Home` / `Payments`), the mobile app automatically receives **all fee records for all linked siblings in the family group**.
+
+### Key Highlights
+1. **Automatic Sibling Group Aggregation**:
+   Calling `GET /api/v1/students/my/fees` automatically resolves the family's `siblingGroupId` or parent contact and fetches all invoices across both siblings.
+2. **Seamless Profile Switch**:
+   Whether the active session is **Keshika Devan** or shifted to **RUTHVI PANDIAN**, the same consolidated fee list is returned so the parent never misses an invoice.
+3. **Child Identification on Mobile UI**:
+   - For sibling families, `batchId.name` is automatically formatted as: `"<BatchName> (<Student FullName>)"` (e.g. `kids_begineer (keshika devan)` and `kids_begineer (RUTHVI PANDIAN)`). This renders directly inside existing Flutter mobile cards without requiring frontend layout changes.
+   - Dedicated fields `studentName`, `studentRegNo`, `studentId`, and `student` object (`{ id, firstName, lastName, fullName, regNo, phone }`) are included on each fee object for custom multi-child UI tabs.
+4. **1-Tap Online Payment for Any Sibling Invoice**:
+   Parents can pay any pending sibling fee via Razorpay order endpoint (`POST /finance/monthly-fees/:id/razorpay/order`) or UPI without switching accounts.
+
+---
+
+### Request Details
+- **Method:** `GET`
+- **URL:** `https://www.amdplayapi.amdtechno.in/api/v1/students/my/fees`
+- **Headers:**
+  ```http
+  Authorization: Bearer <STUDENT_OR_SIBLING_TOKEN>
+  ```
+
+*(Optional query alias: `GET https://www.amdplayapi.amdtechno.in/api/v1/students/:id/fees?includeSiblings=true`)*
+
+---
+
+### Success Response (`200 OK`)
+```json
+{
+  "success": true,
+  "message": "Personal monthly coaching fee records retrieved",
+  "data": [
+    {
+      "_id": "6af1e2ae185e913f71898a7e",
+      "studentId": "6af1e2ae185e913f71898a76",
+      "studentName": "RUTHVI PANDIAN",
+      "studentRegNo": "isabd006",
+      "student": {
+        "_id": "6af1e2ae185e913f71898a76",
+        "id": "6af1e2ae185e913f71898a76",
+        "studentId": "6af1e2ae185e913f71898a76",
+        "firstName": "RUTHVI",
+        "lastName": "PANDIAN",
+        "fullName": "RUTHVI PANDIAN",
+        "regNo": "isabd006",
+        "employeeNo": "isabd006",
+        "phone": "9444154854"
+      },
+      "month": 11,
+      "year": 2026,
+      "baseFee": 2500,
+      "discountAmount": 0,
+      "finalAmount": 2500,
+      "paidAmount": 2500,
+      "dueDate": "2026-11-04T18:30:00.000Z",
+      "status": "paid",
+      "paidAt": "2026-11-11T20:25:02.474Z",
+      "receiptNo": "REC-STU-202611-7129",
+      "batchName": "kids_begineer",
+      "batchId": {
+        "_id": "6ae3be5a51203568f13cc0e5",
+        "name": "kids_begineer (RUTHVI PANDIAN)",
+        "batchName": "kids_begineer",
+        "code": "BEGINNER-0600",
+        "schedule": {
+          "daysOfWeek": [1, 3, 5],
+          "startTime": "06:00",
+          "endTime": "07:00"
+        }
+      },
+      "sportId": {
+        "_id": "6ad6bdead33a91a36c41ff5b",
+        "name": "Badminton",
+        "icon": ""
+      }
+    },
+    {
+      "_id": "6ae535a941a64984822e1c89",
+      "studentId": "6ae3bfa56989d6280874ef35",
+      "studentName": "keshika devan",
+      "studentRegNo": "isabd003",
+      "student": {
+        "_id": "6ae3bfa56989d6280874ef35",
+        "id": "6ae3bfa56989d6280874ef35",
+        "studentId": "6ae3bfa56989d6280874ef35",
+        "firstName": "keshika",
+        "lastName": "devan",
+        "fullName": "keshika devan",
+        "regNo": "isabd003",
+        "employeeNo": "isabd003",
+        "phone": "9894789477"
+      },
+      "month": 11,
+      "year": 2026,
+      "baseFee": 2500,
+      "discountAmount": 0,
+      "finalAmount": 2500,
+      "paidAmount": 2500,
+      "dueDate": "2026-11-04T18:30:00.000Z",
+      "status": "paid",
+      "paidAt": "2026-11-11T20:25:02.474Z",
+      "receiptNo": "REC-STU-202611-7128",
+      "batchName": "kids_begineer",
+      "batchId": {
+        "_id": "6ae3be5a51203568f13cc0e5",
+        "name": "kids_begineer (keshika devan)",
+        "batchName": "kids_begineer",
+        "code": "BEGINNER-0600",
+        "schedule": {
+          "daysOfWeek": [1, 3, 5],
+          "startTime": "06:00",
+          "endTime": "07:00"
+        }
+      },
+      "sportId": {
+        "_id": "6ad6bdead33a91a36c41ff5b",
+        "name": "Badminton",
+        "icon": ""
+      }
+    },
+    {
+      "_id": "6ae532e1b2d71308812c19f1",
+      "studentId": "6ae3bfa56989d6280874ef35",
+      "studentName": "keshika devan",
+      "studentRegNo": "isabd003",
+      "student": {
+        "_id": "6ae3bfa56989d6280874ef35",
+        "id": "6ae3bfa56989d6280874ef35",
+        "studentId": "6ae3bfa56989d6280874ef35",
+        "firstName": "keshika",
+        "lastName": "devan",
+        "fullName": "keshika devan",
+        "regNo": "isabd003",
+        "employeeNo": "isabd003",
+        "phone": "9894789477"
+      },
+      "month": 10,
+      "year": 2026,
+      "baseFee": 2500,
+      "discountAmount": 0,
+      "finalAmount": 2500,
+      "paidAmount": 2500,
+      "dueDate": "2026-10-04T18:30:00.000Z",
+      "status": "paid",
+      "paidAt": "2026-10-31T20:25:02.474Z",
+      "receiptNo": "REC-STU-202610-5201",
+      "batchName": "kids_begineer",
+      "batchId": {
+        "_id": "6ae3be5a51203568f13cc0e5",
+        "name": "kids_begineer (keshika devan)",
+        "batchName": "kids_begineer",
+        "code": "BEGINNER-0600",
+        "schedule": {
+          "daysOfWeek": [1, 3, 5],
+          "startTime": "06:00",
+          "endTime": "07:00"
+        }
+      },
+      "sportId": {
+        "_id": "6ad6bdead33a91a36c41ff5b",
+        "name": "Badminton",
+        "icon": ""
+      }
+    }
+  ]
+}
+```
+
+---
 *Created for AMD Sports SaaS Platform - Sibling API Specification*
