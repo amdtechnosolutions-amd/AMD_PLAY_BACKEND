@@ -116,3 +116,4 @@ To register this device in AMD Play SaaS:
 - **Linked Sport IDs:** `cricket` (`6ad6be011ee0aaebb67610aa`), `football` (`6ad6be1428611d721770eac4`)
 - **Linked Resource ID:** `TRUF` (`6adfd230b968550380613b78`)
 - **Automated Scheduling:** When users book the Turf via the mobile app or web, `iot-scheduler.service.js` automatically turns on CH1 & CH2 15 minutes before the slot starts and turns them off 15 minutes after.
+
