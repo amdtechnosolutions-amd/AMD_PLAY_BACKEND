@@ -198,6 +198,7 @@ void sendJsonData() {
 void MQTT_Init() {
   setup_wifi();
   if (WIFI_Connection == 1) {
+    client.setBufferSize(1024);
     client.setServer(currentConfig.mqtt_server.c_str(), currentConfig.mqtt_port);
     client.setCallback(callback);
   }

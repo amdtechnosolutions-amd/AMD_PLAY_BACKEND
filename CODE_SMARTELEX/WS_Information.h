@@ -14,7 +14,7 @@
 #define STAPSK        "YOUR_WIFI_PASSWORD"        // <-- Put your Wi-Fi password here
 
 // 2. MQTT Broker Details
-#define MQTT_Server   "192.168.1.100"             // <-- Put your backend / broker IP here
+#define MQTT_Server   "103.99.36.60"              // <-- Production Cloud VPS Broker IP (or amdplayapi.amdtechno.in)
 #define MQTT_Port     1883
 
 // 3. Unique Device 2 Identifiers for Badminton

@@ -20,6 +20,9 @@ void Config_Load() {
   currentConfig.wifi_ssid   = prefs.getString("ssid", "");
   currentConfig.wifi_pass   = prefs.getString("pass", "");
   currentConfig.mqtt_server = prefs.getString("mqtt_srv", MQTT_Server);
+  if (currentConfig.mqtt_server == "192.168.1.100" || currentConfig.mqtt_server.length() == 0) {
+    currentConfig.mqtt_server = "103.99.36.60";
+  }
   currentConfig.mqtt_port   = prefs.getInt("mqtt_port", MQTT_Port);
   currentConfig.mqtt_id     = prefs.getString("mqtt_id", MQTT_ID);
   currentConfig.mqtt_sub    = prefs.getString("mqtt_sub", MQTT_Sub);

@@ -15,7 +15,7 @@
 #define STAPSK        "YOUR_WIFI_PASSWORD"        // <-- Facility Wi-Fi password
 
 // 2. Cloud VPS / MQTT Broker Details
-#define MQTT_Server   "192.168.1.100"             // <-- Backend Cloud VPS / Broker IP
+#define MQTT_Server   "103.99.36.60"              // <-- Production Cloud VPS Broker IP (or amdplayapi.amdtechno.in)
 #define MQTT_Port     1883
 
 // 3. Unique Device 3 Identifiers for Turf Arena

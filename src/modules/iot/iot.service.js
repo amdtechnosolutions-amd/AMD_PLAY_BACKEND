@@ -466,10 +466,10 @@ export class IotService {
     }
 
     for (const t of targetTopics) {
-      // 1. Send master command payload
-      await mqttClient.publish(t, commandPayload);
-      // 2. Send compact Format A payload matching WS_MQTT.cpp: {"data":{"ALL":1}}
+      // 1. Send ultra-compact Format A payload matching WS_MQTT.cpp directly: {"data":{"ALL":1}}
       await mqttClient.publish(t, JSON.stringify({ data: { ALL: isStateOn ? 1 : 0 } }));
+      // 2. Send master command full payload
+      await mqttClient.publish(t, commandPayload);
       // 3. Subtopics
       for (let ch = 1; ch <= 6; ch++) {
         await mqttClient.publish(`${t}/${ch}`, isStateOn ? '1' : '0');
