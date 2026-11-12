@@ -80,3 +80,4 @@ Open MongoDB / Backend Admin Panel and insert the device record in the `devices`
 
 1. Follow [Step 1: Firmware Flashing Guide](file:///home/amdtechno/projects/amd_play/backend/docs/STEP1_FIRMWARE_FLASHING_GUIDE.md) to flash the new sketch to the board.
 2. Follow [Step 2: Hotspot Configuration Guide](file:///home/amdtechno/projects/amd_play/backend/docs/STEP2_HOTSPOT_CONFIG_GUIDE.md) on site using your smartphone.
+

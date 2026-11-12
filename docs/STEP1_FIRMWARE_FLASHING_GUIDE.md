@@ -112,3 +112,4 @@ Go to the **Tools** menu and select the exact settings below:
    - Buzzer emits **2 short beeps**.
 
 **Flashing is complete!** The board is now ready to be deployed on site and configured using the [Hotspot Configuration Guide](file:///home/amdtechno/projects/amd_play/backend/docs/STEP2_HOTSPOT_CONFIG_GUIDE.md).
+

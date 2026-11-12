@@ -150,3 +150,4 @@ If the arena changes its Wi-Fi router or password later:
 
 ### 30-Second Automatic Watchdog:
 If the facility router loses power for **more than 30 seconds**, the board will automatically re-open `amd_wifi_turf` so you can reconfigure it without opening the electrical box!
+
