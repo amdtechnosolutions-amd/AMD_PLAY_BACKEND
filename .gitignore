@@ -40,3 +40,4 @@ Thumbs.db
 *.bak
 dist/
 build/
+CODE_SMARTELEX_BACKUP_*/
