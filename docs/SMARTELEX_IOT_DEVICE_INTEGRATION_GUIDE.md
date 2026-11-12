@@ -168,6 +168,11 @@ Depending on the sport, choose one of these 3 standard electrical patterns:
 
 ## 7. Flashing with Arduino IDE
 
+> [!TIP]
+> **Dedicated Field Guide Available**:  
+> For the standalone, step-by-step flashing, board settings, phone captive portal configuration, and electrician recovery manual, refer to:  
+> 📄 [SMARTELEX_FLASHING_AND_CONFIG_GUIDE.md](file:///home/amdtechno/projects/amd_play/backend/docs/SMARTELEX_FLASHING_AND_CONFIG_GUIDE.md)
+
 ### Board Manager & Settings
 1. Install **ESP32 by Espressif Systems** in Arduino IDE Board Manager (`v2.0.x` or `v3.x`).
 2. Tools Menu Configuration:
@@ -336,3 +341,4 @@ mosquitto_sub -h localhost -p 1883 -t "sports/relays/turf/status" -v
 ---
 
 *Authored for AMD Sports SaaS Platform — Hardware & IoT Engineering Standard*
+

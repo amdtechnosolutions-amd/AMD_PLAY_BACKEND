@@ -1,5 +1,10 @@
 # 🏟️ SmartElex 6CH Controller — Turf Arena Firmware (Cricket & Football)
 
+> [!TIP]
+> **Field Technician Flashing & Hotspot Setup Manual**:  
+> For complete step-by-step instructions with Arduino IDE options, USB flashing, captive portal phone connection, and LED diagnostic tables, see:  
+> 📄 [FLASHING_AND_CONFIG_GUIDE.md](file:///home/amdtechno/projects/amd_play/backend/CODE_SMARTELEX_TURF/FLASHING_AND_CONFIG_GUIDE.md)
+
 ## Overview & Architecture
 
 This directory contains the customized, production-ready firmware for the **Turf Arena SmartElex 6-Channel ESP32-S3 Wi-Fi Relay Controller**.
