@@ -62,6 +62,18 @@ export class StudentController {
     );
   }
 
+  async getMyProfile(req, reply) {
+    const context = this._extractContext(req);
+    context.query = req.query;
+    const profile = await studentService.getMyProfile(context);
+    return reply.status(200).send(
+      apiSuccess({
+        message: 'Personal and sibling student profile retrieved',
+        data: profile,
+      })
+    );
+  }
+
   async updateStudent(req, reply) {
     const context = this._extractContext(req);
     const student = await studentService.updateStudent(req.params.id, req.body, context);

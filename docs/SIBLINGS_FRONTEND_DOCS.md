@@ -26,6 +26,8 @@
 | 11 | **Student & Siblings Scorecards** | `GET` | `/students/:id/evaluations/latest` | `tenant_admin`, `branch_manager`, `coach`, `student` |
 | 12 | **Student & Sibling Attendance (Mobile Switcher)** | `GET` | `/students/my/attendance` | `student` |
 | 13 | **Sibling Group Consolidated Attendance** | `GET` | `/students/siblings/attendance` | `tenant_admin`, `branch_manager`, `coach`, `student` |
+| 14 | **Student & Sibling Full Profile (Mobile App)** | `GET` | `/students/my/profile` | `student`, `customer` |
+| 15 | **Auth Session Profile with Sibling Context** | `GET` | `/auth/me` | `student`, `customer` |
 
 ---
 
@@ -258,11 +260,20 @@ Fetches the complete sibling roster, batch names, and guardian contact details f
 
 ## 4. My Siblings (Mobile App Profile Switcher)
 
-Used inside the Student & Parent Mobile App. When a parent logs in, this endpoint returns all sibling profiles enrolled under the parent's account to populate the **Profile Switcher bottom sheet**.
+Used inside the Student & Parent Mobile App. When a parent or student logs in, this endpoint returns **all sibling profiles** enrolled under the parent's account (including the logged-in student) to populate the **Profile Switcher bottom sheet** or sibling switcher pills.
+
+> [!TIP]
+> **Returns BOTH (All) Siblings!**  
+> The endpoint returns all children in the family group.  
+> The currently authenticated student has `isCurrent: true` and `isSelected: true`.  
+> Sibling records have `isCurrent: false` and `isSelected: false`.  
+> If you strictly need only the other siblings, pass query parameter `?excludeSelf=true`.
 
 ### Request Details
 - **Method:** `GET`
 - **URL:** `https://www.amdplayapi.amdtechno.in/api/v1/students/my/siblings`
+- **Optional Query Parameters:**
+  - `excludeSelf`: Pass `true` to omit the current logged-in user from the array.
 - **Headers:**
   ```http
   Authorization: Bearer <STUDENT_OR_PARENT_TOKEN>
@@ -278,25 +289,61 @@ Used inside the Student & Parent Mobile App. When a parent logs in, this endpoin
     {
       "id": "6af1e2ae185e913f71898a76",
       "studentId": "6af1e2ae185e913f71898a76",
+      "_id": "6af1e2ae185e913f71898a76",
       "firstName": "RUTHVI",
       "lastName": "PANDIAN",
       "fullName": "RUTHVI PANDIAN",
       "regNo": "isabd006",
       "employeeNo": "isabd006",
-      "cardNo": "CARD98211",
+      "cardNo": "445982",
       "phone": "9444154854",
       "siblingGroupId": "6af4929053cf12c1662f4b5a",
       "parentPhone": "9894789477",
+      "parentName": "arunmozhidevan",
+      "isCurrent": true,
+      "isSelected": true,
       "enrollments": [
         {
-          "_id": "6af1e2ae185e913f71898888",
+          "_id": "6af1e2ae185e913f71898a7a",
           "batchId": {
-            "_id": "6ae101a9185e913f71898777",
-            "name": "Evening Badminton Stars",
-            "schedule": {
-              "daysOfWeek": [1, 3, 5],
-              "startTime": "17:00",
-              "endTime": "18:30"
+            "_id": "6ae3be5a51203568f13cc0e5",
+            "name": "kids_begineer",
+            "code": "BEGINNER-0600",
+            "sportId": {
+              "_id": "6ad6bdead33a91a36c41ff5b",
+              "name": "Badminton"
+            }
+          },
+          "status": "active"
+        }
+      ]
+    },
+    {
+      "id": "6ae3bfa56989d6280874ef35",
+      "studentId": "6ae3bfa56989d6280874ef35",
+      "_id": "6ae3bfa56989d6280874ef35",
+      "firstName": "keshika",
+      "lastName": "devan",
+      "fullName": "keshika devan",
+      "regNo": "isabd003",
+      "employeeNo": "isabd003",
+      "cardNo": "492116",
+      "phone": "9894789477",
+      "siblingGroupId": "6af4929053cf12c1662f4b5a",
+      "parentPhone": "9894789477",
+      "parentName": "arunmozhidevan",
+      "isCurrent": false,
+      "isSelected": false,
+      "enrollments": [
+        {
+          "_id": "6ae3be5a51203568f13cc0e8",
+          "batchId": {
+            "_id": "6ae3be5a51203568f13cc0e5",
+            "name": "kids_begineer",
+            "code": "BEGINNER-0600",
+            "sportId": {
+              "_id": "6ad6bdead33a91a36c41ff5b",
+              "name": "Badminton"
             }
           },
           "status": "active"
@@ -1089,7 +1136,7 @@ For mobile screens (e.g. **Payments Tab**, **Sibling Fee Cards**, or **Parent Bi
 
 ---
 
-## 12. Student & Sibling Attendance (Mobile App Profile Switcher)
+## 13. Student & Sibling Attendance (Mobile App Profile Switcher)
 
 Retrieves personal and sibling attendance statistics, biometric punch logs, and coach session records for the logged-in student or parent.
 
@@ -1292,7 +1339,7 @@ Retrieves personal and sibling attendance statistics, biometric punch logs, and 
 
 ---
 
-## 13. Consolidated Sibling Group Attendance (Admin / Coach / Universal Query)
+## 14. Consolidated Sibling Group Attendance (Admin / Coach / Universal Query)
 
 Retrieve consolidated sibling-wise attendance statistics, biometric punch logs, and session breakdown for any family using their `siblingGroupId`, `familyPhone`, or `studentId`.
 
@@ -1311,7 +1358,7 @@ Retrieve consolidated sibling-wise attendance statistics, biometric punch logs, 
 
 ---
 
-## 14. Flutter / Mobile App Sibling Attendance UI Example
+## 15. Flutter / Mobile App Sibling Attendance UI Example
 
 ```dart
 // Flutter Attendance Screen with Sibling Tabs
@@ -1429,6 +1476,174 @@ class _SiblingAttendanceScreenState extends State<SiblingAttendanceScreen> {
   }
 }
 ```
+
+---
+
+## 16. Student & Sibling Full Profile & Profile Switcher (Mobile App)
+
+Dedicated endpoint for the mobile app profile tab. Returns the full student profile, active batch enrollments, guardian details, and **BOTH (all) siblings** in the family.
+
+> [!TIP]
+> **One Single Endpoint for Sibling Switching!**  
+> To view a sibling's complete profile, pass `?studentId=<siblingId>`.  
+> The backend validates that the requested sibling belongs to the authenticated family group and returns that sibling's profile as the primary object while marking `isSelected: true` in the `siblings` list.
+
+### Request Details
+- **Method:** `GET`
+- **URL Path:** `/api/v1/students/my/profile`
+- **Optional Query Parameters:**
+  - `studentId`: Switch to another sibling's profile (e.g. `?studentId=6ae3bfa56989d6280874ef35`)
+- **Headers:**
+  ```http
+  Authorization: Bearer <STUDENT_OR_PARENT_TOKEN>
+  ```
+
+---
+
+### Success Response (`200 OK`)
+
+```json
+{
+  "success": true,
+  "data": {
+    "student": {
+      "_id": "6af1e2ae185e913f71898a76",
+      "id": "6af1e2ae185e913f71898a76",
+      "firstName": "RUTHVI",
+      "lastName": "PANDIAN",
+      "fullName": "RUTHVI PANDIAN",
+      "name": "RUTHVI PANDIAN",
+      "email": "ruthvipandian@example.com",
+      "phone": "9444154854",
+      "regNo": "isabd006",
+      "employeeNo": "isabd006",
+      "cardNo": "445982",
+      "role": "student",
+      "parentName": "arunmozhidevan",
+      "parentPhone": "9894789477",
+      "siblingGroupId": "6af4929053cf12c1662f4b5a",
+      "familyPhone": "9894789477",
+      "hasSiblings": true,
+      "siblingCount": 2,
+      "enrollments": [
+        {
+          "_id": "6af1e2ae185e913f71898a7a",
+          "status": "active",
+          "batchId": {
+            "_id": "6ae3be5a51203568f13cc0e5",
+            "name": "kids_begineer",
+            "code": "BEGINNER-0600",
+            "sportId": {
+              "_id": "6ad6bdead33a91a36c41ff5b",
+              "name": "Badminton"
+            }
+          }
+        }
+      ],
+      "siblings": [
+        {
+          "_id": "6af1e2ae185e913f71898a76",
+          "id": "6af1e2ae185e913f71898a76",
+          "studentId": "6af1e2ae185e913f71898a76",
+          "firstName": "RUTHVI",
+          "lastName": "PANDIAN",
+          "fullName": "RUTHVI PANDIAN",
+          "regNo": "isabd006",
+          "employeeNo": "isabd006",
+          "phone": "9444154854",
+          "cardNo": "445982",
+          "avatar": "",
+          "isCurrent": true,
+          "isSelected": true,
+          "batchName": "kids_begineer",
+          "sportName": "Badminton",
+          "enrollments": [
+            {
+              "_id": "6af1e2ae185e913f71898a7a",
+              "status": "active",
+              "batchId": {
+                "_id": "6ae3be5a51203568f13cc0e5",
+                "name": "kids_begineer",
+                "code": "BEGINNER-0600",
+                "sportId": {
+                  "_id": "6ad6bdead33a91a36c41ff5b",
+                  "name": "Badminton"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "_id": "6ae3bfa56989d6280874ef35",
+          "id": "6ae3bfa56989d6280874ef35",
+          "studentId": "6ae3bfa56989d6280874ef35",
+          "firstName": "keshika",
+          "lastName": "devan",
+          "fullName": "keshika devan",
+          "regNo": "isabd003",
+          "employeeNo": "isabd003",
+          "phone": "9894789477",
+          "cardNo": "492116",
+          "avatar": "",
+          "isCurrent": false,
+          "isSelected": false,
+          "batchName": "kids_begineer",
+          "sportName": "Badminton",
+          "enrollments": [
+            {
+              "_id": "6ae3be5a51203568f13cc0e8",
+              "status": "active",
+              "batchId": {
+                "_id": "6ae3be5a51203568f13cc0e5",
+                "name": "kids_begineer",
+                "code": "BEGINNER-0600",
+                "sportId": {
+                  "_id": "6ad6bdead33a91a36c41ff5b",
+                  "name": "Badminton"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "siblings": [ /* Same siblings array for direct top-level access */ ],
+    "hasSiblings": true,
+    "siblingCount": 2,
+    "siblingGroupId": "6af4929053cf12c1662f4b5a",
+    "familyPhone": "9894789477",
+    "parentName": "arunmozhidevan"
+  }
+}
+```
+
+---
+
+## 17. Auth Session Profile with Sibling Context (`GET /auth/me`)
+
+Immediately upon login or app launch, `GET /api/v1/auth/me` populates sibling metadata and the list of family children directly on `data.user`.
+
+### Key Fields on `data.user`
+- `hasSiblings`: `true` when multiple children are in the family.
+- `siblingCount`: Total number of students in the family group (e.g. `2`).
+- `siblingGroupId`: Shared family group ObjectId.
+- `familyPhone`: Primary parent phone number.
+- `parentName`: Parent / Guardian name.
+- `siblings`: Array containing **BOTH** children with `isCurrent: true` for the active token owner.
+
+### Request Details
+- **Method:** `GET`
+- **URL Path:** `/api/v1/auth/me`
+- **Headers:**
+  ```http
+  Authorization: Bearer <TOKEN>
+  ```
+
+---
+
+## 18. Student Details with Family Siblings (`GET /students/:id`)
+
+When an admin, coach, or the student looks up an individual student profile via `/api/v1/students/:id`, the response automatically resolves sibling membership and attaches `hasSiblings`, `siblingCount`, `siblingGroupId`, `familyPhone`, `parentName`, and `siblings: [...]`.
 
 ---
 *Created for AMD Sports SaaS Platform - Sibling API Specification*

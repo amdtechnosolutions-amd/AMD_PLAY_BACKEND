@@ -184,13 +184,19 @@ export class StudentService {
   }
 
   /**
-   * Get single student profile with enrollments, fees, and attendance
+   * Get single student profile with enrollments, fees, attendance, and sibling context
    */
   async getStudentById(id, context = {}) {
     const tenantId = context.tenantId;
     const [student, enrollments, monthlyFees, recentPunches, latestEvaluation] = await Promise.all([
       User.findOne({ _id: id, tenantId, role: ROLES.STUDENT }).select('-password').lean(),
-      Enrollment.find({ tenantId, studentId: id }).populate('batchId').lean(),
+      Enrollment.find({ tenantId, studentId: id })
+        .populate({
+          path: 'batchId',
+          select: 'name code schedule sportId',
+          populate: { path: 'sportId', select: 'name icon slug' },
+        })
+        .lean(),
       MonthlyFee.find({ tenantId, studentId: id }).sort({ year: -1, month: -1 }).limit(12).lean(),
       AttendancePunchLog.find({ tenantId, studentId: id }).sort({ punchTime: -1 }).limit(10).lean(),
       Evaluation.findOne({ tenantId, studentId: id, status: 'published' })
@@ -203,13 +209,108 @@ export class StudentService {
       throw new NotFoundError(`Student with ID '${id}' not found`);
     }
 
+    // Resolve family students (siblings)
+    const familyStudents = await this._resolveFamilyStudents(student, tenantId);
+    const familyStudentIds = familyStudents.map((s) => s._id);
+
+    const allEnrollments = await Enrollment.find({
+      tenantId,
+      studentId: { $in: familyStudentIds },
+      status: 'active',
+    })
+      .populate({
+        path: 'batchId',
+        select: 'name code schedule sportId',
+        populate: { path: 'sportId', select: 'name icon slug' },
+      })
+      .lean();
+
+    const siblings = familyStudents.map((st) => {
+      const sIdStr = st._id.toString();
+      const stEnr = allEnrollments.filter((e) => e.studentId?.toString() === sIdStr);
+      const primary = stEnr[0];
+      return {
+        id: st._id,
+        _id: st._id,
+        studentId: st._id,
+        firstName: st.firstName,
+        lastName: st.lastName || '',
+        fullName: `${st.firstName} ${st.lastName || ''}`.trim(),
+        employeeNo: st.employeeNo || '',
+        regNo: st.employeeNo || '',
+        phone: st.phone || '',
+        email: st.email || '',
+        cardNo: st.cardNo || '',
+        gender: st.metadata?.gender || '',
+        dateOfBirth: st.metadata?.dateOfBirth || '',
+        skillLevel: st.metadata?.skillLevel || '',
+        avatar: st.avatar || '',
+        batchId: primary?.batchId?._id?.toString() || primary?.batchId || null,
+        batchName: primary?.batchId?.name || '',
+        sportName: primary?.batchId?.sportId?.name || '',
+        enrollments: stEnr,
+        status: st.status || 'active',
+        isCurrent: sIdStr === student._id.toString(),
+        isSelected: sIdStr === student._id.toString(),
+      };
+    });
+
+    const hasSiblings = familyStudents.length > 1;
+    const siblingCount = Math.max(0, familyStudents.length - 1);
+    const siblingGroupId = student.siblingGroupId || student.metadata?.siblingGroupId || null;
+    const familyPhone = student.metadata?.parentPhone || student.phone || '';
+    const parentName = student.metadata?.parentName || '';
+
     return {
       ...student,
+      fullName: `${student.firstName} ${student.lastName || ''}`.trim(),
+      regNo: student.employeeNo || '',
       enrollments,
       monthlyFees,
       recentPunches,
       latestEvaluation,
+      hasSiblings,
+      siblingCount,
+      siblingGroupId,
+      familyPhone,
+      parentName,
+      siblings,
     };
+  }
+
+  /**
+   * Get logged-in student's personal profile (Mobile App)
+   * Supports:
+   * - query.studentId: Switch to profile of a linked sibling student
+   */
+  async getMyProfile(context = {}) {
+    const userId = context.user?.id || context.user?.sub;
+    if (!userId) {
+      throw new ValidationError('Authenticated student user is required');
+    }
+
+    const tenantId = context.tenantId || context.user?.tenantId;
+    const currentUser = await User.findById(userId).lean();
+    if (!currentUser) {
+      throw new NotFoundError('Student profile not found');
+    }
+
+    let targetStudentId = userId;
+    if (context.query?.studentId) {
+      const requestedId = context.query.studentId.toString();
+      const familyStudents = await this._resolveFamilyStudents(currentUser, tenantId);
+      const isSibling = familyStudents.some((s) => s._id.toString() === requestedId);
+      const role = context.user?.role;
+      const isAdminOrCoach = [ROLES.TENANT_ADMIN, ROLES.SUPER_ADMIN, ROLES.BRANCH_MANAGER, ROLES.COACH].includes(role);
+
+      if (isSibling || isAdminOrCoach) {
+        targetStudentId = requestedId;
+      } else {
+        throw new AuthorizationError('Requested student does not belong to your family sibling group');
+      }
+    }
+
+    return await this.getStudentById(targetStudentId, context);
   }
 
   /**
@@ -734,53 +835,61 @@ export class StudentService {
       return [];
     }
 
-    const siblingCriteria = [];
-    if (user.siblingGroupId) {
-      siblingCriteria.push({ siblingGroupId: user.siblingGroupId });
-    }
-    if (user.metadata?.siblingGroupId && mongoose.Types.ObjectId.isValid(user.metadata.siblingGroupId)) {
-      siblingCriteria.push({ siblingGroupId: new mongoose.Types.ObjectId(user.metadata.siblingGroupId) });
-    }
-    if (user.phone) {
-      siblingCriteria.push({ phone: user.phone });
-      siblingCriteria.push({ 'metadata.parentPhone': user.phone });
-    }
-    if (user.metadata?.parentPhone) {
-      siblingCriteria.push({ phone: user.metadata.parentPhone });
-      siblingCriteria.push({ 'metadata.parentPhone': user.metadata.parentPhone });
-    }
-
-    if (siblingCriteria.length === 0) {
+    const familyStudents = await this._resolveFamilyStudents(user, user.tenantId);
+    if (familyStudents.length === 0) {
       return [];
     }
 
-    const siblings = await User.find({
-      tenantId: user.tenantId,
-      _id: { $ne: user._id },
-      role: ROLES.STUDENT,
-      status: 'active',
-      $or: siblingCriteria,
-    }).select('-password');
+    const targetList = context.query?.excludeSelf === 'true'
+      ? familyStudents.filter((st) => st._id.toString() !== user._id.toString())
+      : familyStudents;
 
-    return await Promise.all(
-      siblings.map(async (st) => {
-        const enrollments = await Enrollment.find({ studentId: st._id, status: 'active' }).populate('batchId');
-        return {
-          id: st._id,
-          studentId: st._id,
-          firstName: st.firstName,
-          lastName: st.lastName,
-          fullName: `${st.firstName} ${st.lastName || ''}`.trim(),
-          employeeNo: st.employeeNo,
-          cardNo: st.cardNo,
-          phone: st.phone,
-          email: st.email,
-          siblingGroupId: st.siblingGroupId || user.siblingGroupId || null,
-          parentPhone: st.metadata?.parentPhone || user.metadata?.parentPhone || user.phone || '',
-          enrollments,
-        };
+    const studentIds = targetList.map((st) => st._id);
+    const enrollments = await Enrollment.find({
+      tenantId: user.tenantId,
+      studentId: { $in: studentIds },
+      status: 'active',
+    })
+      .populate({
+        path: 'batchId',
+        select: 'name code schedule sportId',
+        populate: { path: 'sportId', select: 'name icon slug' },
       })
-    );
+      .lean();
+
+    return targetList.map((st) => {
+      const sIdStr = st._id.toString();
+      const stEnrollments = enrollments.filter((e) => e.studentId?.toString() === sIdStr);
+      const primaryEnr = stEnrollments[0];
+
+      return {
+        id: st._id,
+        _id: st._id,
+        studentId: st._id,
+        firstName: st.firstName,
+        lastName: st.lastName || '',
+        fullName: `${st.firstName} ${st.lastName || ''}`.trim(),
+        employeeNo: st.employeeNo || '',
+        regNo: st.employeeNo || '',
+        cardNo: st.cardNo || '',
+        phone: st.phone || '',
+        email: st.email || '',
+        gender: st.metadata?.gender || '',
+        dateOfBirth: st.metadata?.dateOfBirth || '',
+        skillLevel: st.metadata?.skillLevel || '',
+        avatar: st.avatar || '',
+        siblingGroupId: st.siblingGroupId || user.siblingGroupId || null,
+        parentName: st.metadata?.parentName || user.metadata?.parentName || '',
+        parentPhone: st.metadata?.parentPhone || user.metadata?.parentPhone || user.phone || '',
+        batchId: primaryEnr?.batchId?._id?.toString() || primaryEnr?.batchId || null,
+        batchName: primaryEnr?.batchId?.name || '',
+        sportName: primaryEnr?.batchId?.sportId?.name || '',
+        enrollments: stEnrollments,
+        isCurrent: sIdStr === user._id.toString(),
+        isSelected: sIdStr === user._id.toString(),
+        status: st.status || 'active',
+      };
+    });
   }
 
   /**

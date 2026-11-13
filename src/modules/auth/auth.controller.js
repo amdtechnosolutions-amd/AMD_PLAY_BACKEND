@@ -1,6 +1,9 @@
+import mongoose from 'mongoose';
 import { AuthService } from './auth.service.js';
 import { apiSuccess } from '../../utils/response.js';
 import { User } from '../users/user.model.js';
+import { Enrollment } from '../coaching/enrollment.model.js';
+import { ROLES } from '../../config/constants.js';
 
 export class AuthController {
   constructor(fastify) {
@@ -121,16 +124,110 @@ export class AuthController {
     }
 
     const userData = fullUser || request.user;
+    let siblings = [];
+    let hasSiblings = false;
+    let siblingCount = 0;
+    let siblingGroupId = userData?.siblingGroupId || userData?.metadata?.siblingGroupId || null;
+    let familyPhone = userData?.metadata?.parentPhone || userData?.phone || '';
+    let parentName = userData?.metadata?.parentName || '';
+
+    if (userData && (userData.role === 'student' || userData.role === ROLES.STUDENT)) {
+      try {
+        const tenantId = request.tenantId || userData.tenantId;
+        const siblingCriteria = [];
+        if (userData.siblingGroupId) siblingCriteria.push({ siblingGroupId: userData.siblingGroupId });
+        if (userData.metadata?.siblingGroupId && mongoose.Types.ObjectId.isValid(userData.metadata.siblingGroupId)) {
+          siblingCriteria.push({ siblingGroupId: new mongoose.Types.ObjectId(userData.metadata.siblingGroupId) });
+        }
+        if (userData.phone) {
+          siblingCriteria.push({ phone: userData.phone });
+          siblingCriteria.push({ 'metadata.parentPhone': userData.phone });
+        }
+        if (userData.metadata?.parentPhone) {
+          siblingCriteria.push({ phone: userData.metadata.parentPhone });
+          siblingCriteria.push({ 'metadata.parentPhone': userData.metadata.parentPhone });
+        }
+
+        if (siblingCriteria.length > 0) {
+          const docs = await User.find({
+            tenantId,
+            role: ROLES.STUDENT,
+            status: 'active',
+            $or: siblingCriteria,
+          }).select('-password').lean();
+
+          if (docs.length > 0) {
+            const studentMap = new Map();
+            studentMap.set(userData._id.toString(), userData);
+            for (const d of docs) {
+              studentMap.set(d._id.toString(), d);
+            }
+            const familyStudents = Array.from(studentMap.values());
+            hasSiblings = familyStudents.length > 1;
+            siblingCount = Math.max(0, familyStudents.length - 1);
+
+            const studentIds = familyStudents.map((s) => s._id);
+            const enrollments = await Enrollment.find({
+              tenantId,
+              studentId: { $in: studentIds },
+              status: 'active',
+            })
+              .populate({
+                path: 'batchId',
+                select: 'name code schedule sportId',
+                populate: { path: 'sportId', select: 'name' },
+              })
+              .lean();
+
+            siblings = familyStudents.map((st) => {
+              const sIdStr = st._id.toString();
+              const stEnr = enrollments.filter((e) => e.studentId?.toString() === sIdStr);
+              const primary = stEnr[0];
+              return {
+                id: st._id,
+                _id: st._id,
+                studentId: st._id,
+                firstName: st.firstName,
+                lastName: st.lastName || '',
+                fullName: `${st.firstName} ${st.lastName || ''}`.trim(),
+                employeeNo: st.employeeNo || '',
+                regNo: st.employeeNo || '',
+                phone: st.phone || '',
+                cardNo: st.cardNo || '',
+                avatar: st.avatar || '',
+                siblingGroupId: st.siblingGroupId || siblingGroupId,
+                parentPhone: st.metadata?.parentPhone || familyPhone,
+                parentName: st.metadata?.parentName || parentName,
+                batchId: primary?.batchId?._id?.toString() || primary?.batchId || null,
+                batchName: primary?.batchId?.name || '',
+                sportName: primary?.batchId?.sportId?.name || '',
+                enrollments: stEnr,
+                isCurrent: sIdStr === userData._id.toString(),
+                isSelected: sIdStr === userData._id.toString(),
+                status: st.status || 'active',
+              };
+            });
+          }
+        }
+      } catch (_) {}
+    }
+
     return reply.status(200).send(
       apiSuccess({
         message: 'Authenticated profile retrieved',
         data: {
           user: {
             ...userData,
-            primaryRole: userData.role,
+            primaryRole: userData?.role,
+            hasSiblings,
+            siblingCount,
+            siblingGroupId,
+            familyPhone,
+            parentName,
+            siblings,
           },
-          tenantId: request.tenantId || userData.tenantId,
-          branchId: request.branchId || userData.branchId,
+          tenantId: request.tenantId || userData?.tenantId,
+          branchId: request.branchId || userData?.branchId,
         },
       })
     );

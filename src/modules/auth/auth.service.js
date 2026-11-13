@@ -556,14 +556,20 @@ export class AuthService {
       if (siblingCriteria.length > 0) {
         const siblingDocs = await User.find({
           tenantId: user.tenantId,
-          _id: { $ne: user._id },
           role: ROLES.STUDENT,
           status: 'active',
           $or: siblingCriteria,
         }).select('-password');
 
+        const studentMap = new Map();
+        studentMap.set(user._id.toString(), user);
+        for (const d of siblingDocs) {
+          studentMap.set(d._id.toString(), d);
+        }
+        const familyStudents = Array.from(studentMap.values());
+
         siblings = await Promise.all(
-          siblingDocs.map(async (st) => {
+          familyStudents.map(async (st) => {
             const sEnrollments = await Enrollment.find({ studentId: st._id, status: 'active' }).populate('batchId');
             return {
               id: st._id,
@@ -580,6 +586,8 @@ export class AuthService {
               siblingGroupId: st.siblingGroupId || user.siblingGroupId || null,
               parentPhone: st.metadata?.parentPhone || user.metadata?.parentPhone || user.phone || '',
               enrollments: sEnrollments,
+              isCurrent: st._id.toString() === user._id.toString(),
+              isSelected: st._id.toString() === user._id.toString(),
             };
           })
         );
@@ -613,6 +621,11 @@ export class AuthService {
         tenantId: user.tenantId?.toString() || null,
         role: user.role || 'student',
         tenant: tenantInfo,
+        hasSiblings: siblings.length > 1,
+        siblingCount: Math.max(0, siblings.length - 1),
+        siblingGroupId: user.siblingGroupId || user.metadata?.siblingGroupId || null,
+        familyPhone: user.metadata?.parentPhone || user.phone || '',
+        parentName: user.metadata?.parentName || '',
         enrollments,
         siblings,
       },

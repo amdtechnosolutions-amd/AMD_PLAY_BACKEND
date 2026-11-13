@@ -19,6 +19,7 @@ import {
   markStudentAttendanceSchema,
   getMyAttendanceSchema,
   getSiblingAttendanceSchema,
+  getMyProfileSchema,
   getMySiblingsSchema,
 } from './student.schema.js';
 import { requireTenantContext } from '../../middleware/tenant.middleware.js';
@@ -73,6 +74,13 @@ export default async function studentRoutes(fastify) {
     schema: getMyAttendanceSchema,
     preHandler: [fastify.authenticate, requireTenantContext],
     handler: studentController.getMyAttendance.bind(studentController),
+  });
+
+  // Logged-in Student personal profile (supports ?studentId=<siblingId> switcher)
+  fastify.get('/students/my/profile', {
+    schema: getMyProfileSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: studentController.getMyProfile.bind(studentController),
   });
 
   // Logged-in Student siblings under the same parent contact for Mobile App

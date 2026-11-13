@@ -182,10 +182,28 @@ export const getSiblingAttendanceSchema = {
   },
 };
 
+export const getMyProfileSchema = {
+  description: '[Roles: student, member, customer] Get personal and sibling student profile with enrollments, batches, fees, and family context (supports ?studentId=<id> profile switcher)',
+  tags: ['Students Management'],
+  security: [{ bearerAuth: [] }],
+  querystring: {
+    type: 'object',
+    properties: {
+      studentId: { type: 'string', description: 'Selected sibling student ID (for profile switcher)' },
+    },
+  },
+};
+
 export const getMySiblingsSchema = {
   description: '[Roles: student] Retrieve all sibling profiles enrolled under the same family mobile number for easy mobile switching',
   tags: ['Students Management'],
   security: [{ bearerAuth: [] }],
+  querystring: {
+    type: 'object',
+    properties: {
+      excludeSelf: { type: 'boolean', description: 'Exclude the logged-in student from the siblings list' },
+    },
+  },
 };
 
 
