@@ -1,5 +1,7 @@
 import { bookingService } from './booking.service.js';
 import { apiSuccess } from '../../utils/response.js';
+import { User } from '../users/user.model.js';
+import { studentService } from '../students/student.service.js';
 
 export class BookingController {
   _extractContext(request) {
@@ -41,9 +43,25 @@ export class BookingController {
 
   async listMy(request, reply) {
     const context = this._extractContext(request);
-    const { page, limit, sort, ...filters } = request.query || {};
-    filters.userId = context.user?.id || context.user?.sub;
+    const { page, limit, sort, studentId, ...filters } = request.query || {};
+    let targetUserId = context.user?.id || context.user?.sub;
 
+    if (studentId) {
+      const requestedId = studentId.toString();
+      const currentUser = await User.findById(targetUserId).lean();
+      if (currentUser) {
+        const familyStudents = await studentService._resolveFamilyStudents(currentUser, context.tenantId);
+        const isSibling = familyStudents.some((s) => s._id.toString() === requestedId);
+        const role = context.user?.role;
+        const isAdminOrCoach = ['tenant_admin', 'super_admin', 'manager', 'coach', 'trainer'].includes(role);
+
+        if (isSibling || isAdminOrCoach) {
+          targetUserId = requestedId;
+        }
+      }
+    }
+
+    filters.userId = targetUserId;
     const result = await bookingService.listBookings(filters, { page, limit, sort }, context);
 
     return reply.status(200).send(

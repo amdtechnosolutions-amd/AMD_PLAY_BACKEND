@@ -7,6 +7,7 @@ import { MonthlyFee } from '../finance/monthly-fee.model.js';
 import { Payment } from '../finance/payment.model.js';
 import { Evaluation } from '../coaching/evaluation.model.js';
 import { Skill } from '../skills/skill.model.js';
+import { Booking } from '../bookings/booking.model.js';
 import { coachingService } from '../coaching/coaching.service.js';
 import { NotFoundError, ValidationError, AuthorizationError } from '../../errors/AppError.js';
 import { ROLES } from '../../config/constants.js';
@@ -188,7 +189,7 @@ export class StudentService {
    */
   async getStudentById(id, context = {}) {
     const tenantId = context.tenantId;
-    const [student, enrollments, monthlyFees, recentPunches, latestEvaluation] = await Promise.all([
+    const [student, enrollments, monthlyFees, recentPunches, latestEvaluation, studentBookings, totalBookingsCount] = await Promise.all([
       User.findOne({ _id: id, tenantId, role: ROLES.STUDENT }).select('-password').lean(),
       Enrollment.find({ tenantId, studentId: id })
         .populate({
@@ -203,6 +204,13 @@ export class StudentService {
         .populate('coachId', 'firstName lastName')
         .sort({ evaluationDate: -1 })
         .lean(),
+      Booking.find({ tenantId, userId: id })
+        .populate('resourceId', 'name code surface')
+        .populate('sportId', 'name icon')
+        .sort({ date: -1, startTime: -1 })
+        .limit(10)
+        .lean(),
+      Booking.countDocuments({ tenantId, userId: id }),
     ]);
 
     if (!student) {
@@ -213,22 +221,33 @@ export class StudentService {
     const familyStudents = await this._resolveFamilyStudents(student, tenantId);
     const familyStudentIds = familyStudents.map((s) => s._id);
 
-    const allEnrollments = await Enrollment.find({
-      tenantId,
-      studentId: { $in: familyStudentIds },
-      status: 'active',
-    })
-      .populate({
-        path: 'batchId',
-        select: 'name code schedule sportId',
-        populate: { path: 'sportId', select: 'name icon slug' },
+    const [allEnrollments, allFamilyBookings] = await Promise.all([
+      Enrollment.find({
+        tenantId,
+        studentId: { $in: familyStudentIds },
+        status: 'active',
       })
-      .lean();
+        .populate({
+          path: 'batchId',
+          select: 'name code schedule sportId',
+          populate: { path: 'sportId', select: 'name icon slug' },
+        })
+        .lean(),
+      Booking.find({
+        tenantId,
+        userId: { $in: familyStudentIds },
+      })
+        .populate('resourceId', 'name code surface')
+        .populate('sportId', 'name icon')
+        .sort({ date: -1, startTime: -1 })
+        .lean(),
+    ]);
 
     const siblings = familyStudents.map((st) => {
       const sIdStr = st._id.toString();
       const stEnr = allEnrollments.filter((e) => e.studentId?.toString() === sIdStr);
       const primary = stEnr[0];
+      const stBookings = allFamilyBookings.filter((b) => b.userId?.toString() === sIdStr);
       return {
         id: st._id,
         _id: st._id,
@@ -249,11 +268,43 @@ export class StudentService {
         batchName: primary?.batchId?.name || '',
         sportName: primary?.batchId?.sportId?.name || '',
         enrollments: stEnr,
+        totalBookings: stBookings.length,
+        bookings: stBookings.slice(0, 5).map((b) => ({
+          _id: b._id,
+          bookingNumber: b.bookingNumber,
+          status: b.status,
+          date: b.date,
+          startTime: b.startTime,
+          endTime: b.endTime,
+          accessCode: b.accessCode,
+          courtName: b.resourceId?.name || '',
+          courtCode: b.resourceId?.code || '',
+          sportName: b.sportId?.name || '',
+          finalAmount: b.pricing?.finalAmount || b.pricing?.totalAmount || 0,
+        })),
         status: st.status || 'active',
         isCurrent: sIdStr === student._id.toString(),
         isSelected: sIdStr === student._id.toString(),
       };
     });
+
+    const formattedBookings = studentBookings.map((b) => ({
+      _id: b._id,
+      bookingNumber: b.bookingNumber,
+      status: b.status,
+      date: b.date,
+      startTime: b.startTime,
+      endTime: b.endTime,
+      accessCode: b.accessCode,
+      courtName: b.resourceId?.name || '',
+      courtCode: b.resourceId?.code || '',
+      surface: b.resourceId?.surface || '',
+      sportName: b.sportId?.name || '',
+      finalAmount: b.pricing?.finalAmount || b.pricing?.totalAmount || 0,
+      paymentStatus: b.payment?.status || 'success',
+      paymentMethod: b.payment?.method || 'upi',
+      createdAt: b.createdAt,
+    }));
 
     const hasSiblings = familyStudents.length > 1;
     const siblingCount = Math.max(0, familyStudents.length - 1);
@@ -269,6 +320,8 @@ export class StudentService {
       monthlyFees,
       recentPunches,
       latestEvaluation,
+      totalBookings: totalBookingsCount,
+      bookings: formattedBookings,
       hasSiblings,
       siblingCount,
       siblingGroupId,
