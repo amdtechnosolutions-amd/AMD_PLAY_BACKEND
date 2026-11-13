@@ -14,6 +14,7 @@ import {
   ValidationError,
 } from '../../errors/AppError.js';
 import { ROLES } from '../../config/constants.js';
+import { resolveUserPermissions } from '../../middleware/permission.middleware.js';
 import { getTenantDatabaseName } from '../../utils/tenantDatabase.js';
 
 const ROLE_PRIORITY = {
@@ -167,6 +168,7 @@ export class AuthService {
     user.lastLoginAt = new Date();
     await user.save();
 
+    const effectivePermissions = resolveUserPermissions(user.role, user.permissions);
     const payload = {
       sub: user._id.toString(),
       id: user._id.toString(),
@@ -174,13 +176,14 @@ export class AuthService {
       tenantId: user.tenantId ? user.tenantId.toString() : null,
       branchId: user.branchId ? user.branchId.toString() : null,
       role: user.role,
-      permissions: user.permissions || [],
+      permissions: effectivePermissions,
     };
 
     const accessToken = this.jwtSigner(payload);
 
     const userObj = user.toObject();
     delete userObj.password;
+    userObj.permissions = effectivePermissions;
 
     let tenantInfo = null;
     if (user.tenantId) {
@@ -335,6 +338,7 @@ export class AuthService {
     user.lastLoginAt = new Date();
     await user.save();
 
+    const effectivePermissions = resolveUserPermissions(user.role, user.permissions);
     const payload = {
       sub: user._id.toString(),
       id: user._id.toString(),
@@ -342,13 +346,14 @@ export class AuthService {
       tenantId: tenant._id.toString(),
       branchId: user.branchId ? user.branchId.toString() : null,
       role: user.role,
-      permissions: user.permissions || [],
+      permissions: effectivePermissions,
     };
 
     const accessToken = this.jwtSigner(payload);
 
     const userObj = user.toObject();
     delete userObj.password;
+    userObj.permissions = effectivePermissions;
 
     return {
       accessToken,
@@ -594,6 +599,7 @@ export class AuthService {
       }
     }
 
+    const effectivePermissions = resolveUserPermissions(ROLES.STUDENT, user.permissions);
     const payload = {
       sub: user._id.toString(),
       id: user._id.toString(),
@@ -601,12 +607,13 @@ export class AuthService {
       tenantId: user.tenantId?.toString() || null,
       branchId: user.branchId?.toString() || null,
       role: ROLES.STUDENT,
-      permissions: user.permissions || [],
+      permissions: effectivePermissions,
     };
 
     const accessToken = this.jwtSigner(payload);
     const userObj = user.toObject();
     delete userObj.password;
+    userObj.permissions = effectivePermissions;
 
     return {
       accessToken,
@@ -722,6 +729,7 @@ export class AuthService {
 
     const subscriptions = await MemberSubscription.find({ userId: user._id, status: 'active' }).populate('planId');
 
+    const effectivePermissions = resolveUserPermissions(user.role || ROLES.CUSTOMER, user.permissions);
     const payload = {
       sub: user._id.toString(),
       id: user._id.toString(),
@@ -729,12 +737,13 @@ export class AuthService {
       tenantId: user.tenantId?.toString() || null,
       branchId: user.branchId?.toString() || null,
       role: user.role,
-      permissions: user.permissions || [],
+      permissions: effectivePermissions,
     };
 
     const accessToken = this.jwtSigner(payload);
     const userObj = user.toObject();
     delete userObj.password;
+    userObj.permissions = effectivePermissions;
 
     return {
       accessToken,
@@ -812,6 +821,7 @@ export class AuthService {
       });
     }
 
+    const effectivePermissions = resolveUserPermissions(user.role || ROLES.CUSTOMER, user.permissions);
     const payload = {
       sub: user._id.toString(),
       id: user._id.toString(),
@@ -819,7 +829,7 @@ export class AuthService {
       tenantId: resolvedTenantId.toString(),
       branchId: resource.branchId ? resource.branchId.toString() : null,
       role: user.role,
-      permissions: user.permissions || [],
+      permissions: effectivePermissions,
     };
     const accessToken = this.jwtSigner(payload);
 
@@ -924,6 +934,7 @@ export class AuthService {
       });
     }
 
+    const effectivePermissions = resolveUserPermissions(user.role || ROLES.CUSTOMER, user.permissions);
     const payload = {
       sub: user._id.toString(),
       id: user._id.toString(),
@@ -931,12 +942,13 @@ export class AuthService {
       tenantId: user.tenantId ? user.tenantId.toString() : null,
       branchId: user.branchId ? user.branchId.toString() : null,
       role: user.role,
-      permissions: user.permissions || [],
+      permissions: effectivePermissions,
     };
 
     const accessToken = this.jwtSigner(payload);
     const userObj = user.toObject();
     delete userObj.password;
+    userObj.permissions = effectivePermissions;
 
     return {
       accessToken,

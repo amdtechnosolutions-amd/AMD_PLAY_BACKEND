@@ -4,6 +4,7 @@ import { apiSuccess } from '../../utils/response.js';
 import { User } from '../users/user.model.js';
 import { Enrollment } from '../coaching/enrollment.model.js';
 import { ROLES } from '../../config/constants.js';
+import { resolveUserPermissions } from '../../middleware/permission.middleware.js';
 
 export class AuthController {
   constructor(fastify) {
@@ -212,12 +213,15 @@ export class AuthController {
       } catch (_) {}
     }
 
+    const effectivePermissions = resolveUserPermissions(userData?.role, userData?.permissions);
+
     return reply.status(200).send(
       apiSuccess({
         message: 'Authenticated profile retrieved',
         data: {
           user: {
             ...userData,
+            permissions: effectivePermissions,
             primaryRole: userData?.role,
             hasSiblings,
             siblingCount,

@@ -39,6 +39,22 @@ export class BookingController {
     );
   }
 
+  async listMy(request, reply) {
+    const context = this._extractContext(request);
+    const { page, limit, sort, ...filters } = request.query || {};
+    filters.userId = context.user?.id || context.user?.sub;
+
+    const result = await bookingService.listBookings(filters, { page, limit, sort }, context);
+
+    return reply.status(200).send(
+      apiSuccess({
+        message: 'Personal bookings retrieved successfully',
+        data: result.items,
+        meta: result.pagination,
+      })
+    );
+  }
+
   async getById(request, reply) {
     const context = this._extractContext(request);
     const booking = await bookingService.getBookingById(request.params.id, context);

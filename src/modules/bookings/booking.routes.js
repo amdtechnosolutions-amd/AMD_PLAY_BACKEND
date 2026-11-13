@@ -49,7 +49,7 @@ export default async function bookingRoutes(fastify) {
   fastify.get('/bookings/my', {
     schema: getMyBookingsSchema,
     preHandler: [fastify.authenticate, requireTenantContext],
-    handler: bookingController.list.bind(bookingController),
+    handler: bookingController.listMy.bind(bookingController),
   });
 
   // Retrieve All Bookings in a Multi-Slot Group

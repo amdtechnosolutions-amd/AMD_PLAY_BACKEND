@@ -6,6 +6,7 @@ import { Designation } from './designation.model.js';
 import { departmentService } from './department.service.js';
 import { STAFF_ROLES } from './staff.schema.js';
 import { ROLES, PERMISSIONS } from '../../config/constants.js';
+import { resolveUserPermissions } from '../../middleware/permission.middleware.js';
 import { NotFoundError, ValidationError, ConflictError } from '../../errors/AppError.js';
 import { HikvisionService, hikvisionService } from '../iot/hikvision.service.js';
 import { Device } from '../iot/device.model.js';
@@ -100,26 +101,7 @@ export class StaffService {
     const cardNo = (data.cardNo || pin).trim();
 
     // Default permissions based on role
-    let permissions = Array.isArray(data.permissions) ? data.permissions : [];
-    if (permissions.length === 0) {
-      if (role === 'coach' || role === 'trainer') {
-        permissions = [
-          PERMISSIONS.ATTENDANCE_MARK,
-          PERMISSIONS.ATTENDANCE_VIEW,
-          PERMISSIONS.STUDENT_VIEW,
-        ];
-      } else if (role === 'receptionist' || role === 'front_desk') {
-        permissions = [
-          PERMISSIONS.BOOKING_CREATE,
-          PERMISSIONS.BOOKING_VIEW,
-          PERMISSIONS.STUDENT_CREATE,
-          PERMISSIONS.STUDENT_VIEW,
-          PERMISSIONS.PAYMENT_CREATE,
-        ];
-      } else if (role === 'manager' || role === 'branch_admin') {
-        permissions = Object.values(PERMISSIONS);
-      }
-    }
+    let permissions = resolveUserPermissions(role, data.permissions);
 
     // Resolve dynamic Department and Designation
     let resolvedDepartment = (data.department || '').trim();
