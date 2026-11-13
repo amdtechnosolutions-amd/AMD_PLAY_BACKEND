@@ -18,6 +18,7 @@ import {
   uploadStudentFaceSchema,
   markStudentAttendanceSchema,
   getMyAttendanceSchema,
+  getSiblingAttendanceSchema,
   getMySiblingsSchema,
 } from './student.schema.js';
 import { requireTenantContext } from '../../middleware/tenant.middleware.js';
@@ -263,6 +264,13 @@ export default async function studentRoutes(fastify) {
     },
     preHandler: [fastify.authenticate, requireTenantContext],
     handler: studentController.getSiblingPayments.bind(studentController),
+  });
+
+  // Consolidated sibling-wise attendance and punch history for academy or specific sibling family
+  fastify.get('/students/siblings/attendance', {
+    schema: getSiblingAttendanceSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: studentController.getSiblingAttendance.bind(studentController),
   });
 
   // Link two or more students as siblings

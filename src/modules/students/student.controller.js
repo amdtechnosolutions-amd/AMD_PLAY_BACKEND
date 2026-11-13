@@ -8,6 +8,7 @@ export class StudentController {
       tenantId: request.tenantId || request.user?.tenantId,
       branchId: request.user?.branchId,
       user: request.user,
+      query: request.query,
     };
   }
 
@@ -96,6 +97,7 @@ export class StudentController {
 
   async getAttendance(req, reply) {
     const context = this._extractContext(req);
+    context.query = req.query;
     const logs = await studentService.getStudentAttendance(req.params.id, context);
     return reply.status(200).send(
       apiSuccess({
@@ -107,10 +109,23 @@ export class StudentController {
 
   async getMyAttendance(req, reply) {
     const context = this._extractContext(req);
+    context.query = req.query;
     const attendance = await studentService.getMyAttendance(context);
     return reply.status(200).send(
       apiSuccess({
-        message: 'Personal attendance records retrieved',
+        message: 'Personal and sibling attendance records retrieved',
+        data: attendance,
+      })
+    );
+  }
+
+  async getSiblingAttendance(req, reply) {
+    const context = this._extractContext(req);
+    context.query = req.query;
+    const attendance = await studentService.getSiblingAttendance(context);
+    return reply.status(200).send(
+      apiSuccess({
+        message: 'Sibling family attendance records retrieved successfully',
         data: attendance,
       })
     );

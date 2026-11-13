@@ -8,7 +8,7 @@ import { Payment } from '../finance/payment.model.js';
 import { Evaluation } from '../coaching/evaluation.model.js';
 import { Skill } from '../skills/skill.model.js';
 import { coachingService } from '../coaching/coaching.service.js';
-import { NotFoundError, ValidationError } from '../../errors/AppError.js';
+import { NotFoundError, ValidationError, AuthorizationError } from '../../errors/AppError.js';
 import { ROLES } from '../../config/constants.js';
 
 export class StudentService {
@@ -278,55 +278,443 @@ export class StudentService {
   }
 
   /**
-   * Get student attendance history & statistical summary
+   * Helper to resolve all student accounts belonging to the same sibling family group.
+   * Checks siblingGroupId, metadata.siblingGroupId, and shared parent phone numbers.
    */
-  async getStudentAttendance(id, context = {}) {
-    const tenantId = context.tenantId;
-    const [punchLogs, manualAttendances] = await Promise.all([
-      AttendancePunchLog.find({ tenantId, studentId: id }).sort({ punchTime: -1 }).limit(100).lean(),
-      Attendance.find({
-        tenantId,
-        'records.studentId': id,
-      }).sort({ date: -1 }).limit(60).lean(),
-    ]);
+  async _resolveFamilyStudents(studentOrId, tenantId = null) {
+    let student = studentOrId;
+    if (!student || typeof student === 'string' || student instanceof mongoose.Types.ObjectId) {
+      student = await User.findById(studentOrId).lean();
+    }
+    if (!student) return [];
+
+    const effectiveTenantId = student.tenantId || tenantId;
+    const siblingCriteria = [];
+    if (student.siblingGroupId) {
+      siblingCriteria.push({ siblingGroupId: student.siblingGroupId });
+    }
+    if (student.metadata?.siblingGroupId && mongoose.Types.ObjectId.isValid(student.metadata.siblingGroupId)) {
+      siblingCriteria.push({ siblingGroupId: new mongoose.Types.ObjectId(student.metadata.siblingGroupId) });
+      siblingCriteria.push({ 'metadata.siblingGroupId': student.metadata.siblingGroupId });
+    }
+    if (student.phone) {
+      siblingCriteria.push({ phone: student.phone });
+      siblingCriteria.push({ 'metadata.parentPhone': student.phone });
+    }
+    if (student.metadata?.parentPhone) {
+      siblingCriteria.push({ phone: student.metadata.parentPhone });
+      siblingCriteria.push({ 'metadata.parentPhone': student.metadata.parentPhone });
+    }
+
+    if (siblingCriteria.length === 0) {
+      return [student];
+    }
+
+    const docs = await User.find({
+      tenantId: effectiveTenantId,
+      role: ROLES.STUDENT,
+      status: 'active',
+      $or: siblingCriteria,
+    })
+      .select('_id firstName lastName employeeNo phone email metadata avatar cardNo siblingGroupId')
+      .lean();
+
+    const studentMap = new Map();
+    studentMap.set(student._id.toString(), student);
+    for (const d of docs) {
+      studentMap.set(d._id.toString(), d);
+    }
+    return Array.from(studentMap.values());
+  }
+
+  /**
+   * Calculate attendance summary statistics, punch logs, and session history for a student
+   */
+  _calculateAttendanceMetrics(student, punchLogs = [], manualAttendances = []) {
+    const sId = student._id || student;
+    const sIdStr = sId.toString();
+    const empNo = student.employeeNo ? String(student.employeeNo).trim().toLowerCase() : null;
+    const cardNo = student.cardNo ? String(student.cardNo).trim() : null;
+
+    const stPunches = punchLogs.filter((p) => {
+      if (p.studentId && p.studentId.toString() === sIdStr) return true;
+      if (empNo && p.employeeNo && String(p.employeeNo).trim().toLowerCase() === empNo) return true;
+      if (cardNo && p.cardNo && String(p.cardNo).trim() === cardNo) return true;
+      return false;
+    });
 
     let presentCount = 0;
     let absentCount = 0;
-    const sessionHistory = manualAttendances.map((att) => {
-      const rec = att.records.find((r) => r.studentId?.toString() === id.toString());
-      if (rec?.status === 'present') presentCount += 1;
-      else if (rec?.status === 'absent') absentCount += 1;
-      return {
-        date: att.date,
-        batchId: att.batchId,
-        status: rec?.status || 'present',
-        remarks: rec?.remarks || '',
-      };
-    });
+    let excusedCount = 0;
+    const sessionHistory = [];
 
-    const totalSessions = presentCount + absentCount;
-    const attendancePercentage = totalSessions > 0 ? Math.round((presentCount / totalSessions) * 100) : 100;
+    for (const att of manualAttendances) {
+      const rec = att.records?.find((r) => r.studentId?.toString() === sIdStr);
+      if (rec) {
+        if (rec.status === 'present') presentCount += 1;
+        else if (rec.status === 'absent') absentCount += 1;
+        else if (rec.status === 'excused') excusedCount += 1;
+
+        sessionHistory.push({
+          date: att.date,
+          batchId: att.batchId,
+          status: rec.status || 'present',
+          remarks: rec.remarks || '',
+          checkInTime: rec.checkInTime || null,
+          checkOutTime: rec.checkOutTime || null,
+          verificationMode: rec.verificationMode || '',
+        });
+      }
+    }
+
+    const activeSessions = presentCount + absentCount;
+    const totalSessions = activeSessions + excusedCount;
+    const attendancePercentage = activeSessions > 0 ? Math.round((presentCount / activeSessions) * 100) : 100;
+    const latestPunch = stPunches.length > 0 ? stPunches[0] : null;
 
     return {
-      studentId: id,
       totalSessions,
       presentCount,
       absentCount,
+      excusedCount,
       attendancePercentage,
-      punchLogs,
+      latestPunch,
+      punchLogs: stPunches,
       sessionHistory,
     };
   }
 
   /**
+   * Get student attendance history & statistical summary.
+   * When student has linked siblings, includes family sibling metadata and sibling attendance summaries.
+   */
+  async getStudentAttendance(id, context = {}) {
+    const tenantId = context.tenantId || context.user?.tenantId;
+    const currentUser = await User.findById(id).lean();
+    if (!currentUser) {
+      throw new NotFoundError('Student profile not found');
+    }
+
+    const familyStudents = await this._resolveFamilyStudents(currentUser, tenantId);
+    const familyStudentIds = familyStudents.map((s) => s._id);
+
+    const punchCriteria = [{ studentId: { $in: familyStudentIds } }];
+    const empNos = familyStudents.map((s) => s.employeeNo).filter(Boolean);
+    if (empNos.length > 0) {
+      punchCriteria.push({ employeeNo: { $in: empNos } });
+    }
+    const cards = familyStudents.map((s) => s.cardNo).filter(Boolean);
+    if (cards.length > 0) {
+      punchCriteria.push({ cardNo: { $in: cards } });
+    }
+
+    const [punchLogs, manualAttendances, enrollments] = await Promise.all([
+      AttendancePunchLog.find({
+        tenantId,
+        $or: punchCriteria,
+      })
+        .sort({ punchTime: -1 })
+        .limit(200)
+        .lean(),
+      Attendance.find({
+        tenantId,
+        'records.studentId': { $in: familyStudentIds },
+      })
+        .sort({ date: -1 })
+        .limit(100)
+        .lean(),
+      Enrollment.find({
+        tenantId,
+        studentId: { $in: familyStudentIds },
+        status: 'active',
+      })
+        .populate({
+          path: 'batchId',
+          select: 'name code sportId',
+          populate: { path: 'sportId', select: 'name' },
+        })
+        .lean(),
+    ]);
+
+    const targetMetrics = this._calculateAttendanceMetrics(currentUser, punchLogs, manualAttendances);
+    const targetEnr = enrollments.find((e) => e.studentId?.toString() === currentUser._id.toString());
+    const targetFullName = `${currentUser.firstName} ${currentUser.lastName || ''}`.trim();
+
+    const hasSiblings = familyStudents.length > 1;
+    const siblingCount = Math.max(0, familyStudents.length - 1);
+    const siblingGroupId = currentUser.siblingGroupId || currentUser.metadata?.siblingGroupId || null;
+    const familyPhone = currentUser.metadata?.parentPhone || currentUser.phone || '';
+    const parentName = currentUser.metadata?.parentName || '';
+
+    const siblings = familyStudents.map((st) => {
+      const sIdStr = st._id.toString();
+      const sMetrics = this._calculateAttendanceMetrics(st, punchLogs, manualAttendances);
+      const enr = enrollments.find((e) => e.studentId?.toString() === sIdStr);
+
+      return {
+        studentId: sIdStr,
+        _id: sIdStr,
+        firstName: st.firstName,
+        lastName: st.lastName || '',
+        fullName: `${st.firstName} ${st.lastName || ''}`.trim(),
+        employeeNo: st.employeeNo || '',
+        regNo: st.employeeNo || '',
+        phone: st.phone || '',
+        cardNo: st.cardNo || '',
+        avatar: st.avatar || '',
+        batchId: enr?.batchId?._id?.toString() || enr?.batchId || null,
+        batchName: enr?.batchId?.name || '',
+        sportName: enr?.batchId?.sportId?.name || '',
+        totalSessions: sMetrics.totalSessions,
+        presentCount: sMetrics.presentCount,
+        absentCount: sMetrics.absentCount,
+        excusedCount: sMetrics.excusedCount,
+        attendancePercentage: sMetrics.attendancePercentage,
+        latestPunch: sMetrics.latestPunch
+          ? {
+              punchTime: sMetrics.latestPunch.punchTime,
+              verificationMode: sMetrics.latestPunch.verificationMode,
+              deviceName: sMetrics.latestPunch.deviceName,
+              deviceCode: sMetrics.latestPunch.deviceCode,
+              status: sMetrics.latestPunch.status,
+            }
+          : null,
+        isSelected: sIdStr === currentUser._id.toString(),
+      };
+    });
+
+    return {
+      studentId: currentUser._id.toString(),
+      studentName: targetFullName,
+      regNo: currentUser.employeeNo || '',
+      employeeNo: currentUser.employeeNo || '',
+      batchId: targetEnr?.batchId?._id?.toString() || targetEnr?.batchId || null,
+      batchName: targetEnr?.batchId?.name || '',
+      sportName: targetEnr?.batchId?.sportId?.name || '',
+      totalSessions: targetMetrics.totalSessions,
+      presentCount: targetMetrics.presentCount,
+      absentCount: targetMetrics.absentCount,
+      excusedCount: targetMetrics.excusedCount,
+      attendancePercentage: targetMetrics.attendancePercentage,
+      punchLogs: targetMetrics.punchLogs,
+      sessionHistory: targetMetrics.sessionHistory,
+      hasSiblings,
+      siblingCount,
+      siblingGroupId,
+      familyPhone,
+      parentName,
+      selectedStudent: {
+        studentId: currentUser._id.toString(),
+        fullName: targetFullName,
+        firstName: currentUser.firstName,
+        lastName: currentUser.lastName || '',
+        regNo: currentUser.employeeNo || '',
+        phone: currentUser.phone || '',
+        cardNo: currentUser.cardNo || '',
+        avatar: currentUser.avatar || '',
+        batchId: targetEnr?.batchId?._id?.toString() || targetEnr?.batchId || null,
+        batchName: targetEnr?.batchId?.name || '',
+        sportName: targetEnr?.batchId?.sportId?.name || '',
+        attendancePercentage: targetMetrics.attendancePercentage,
+        totalSessions: targetMetrics.totalSessions,
+        presentCount: targetMetrics.presentCount,
+        absentCount: targetMetrics.absentCount,
+      },
+      siblings,
+    };
+  }
+
+  /**
    * Get logged-in student's personal attendance (Mobile App)
+   * Supports:
+   * - query.studentId: Switch to attendance of a linked sibling profile
+   * - query.groupBy === 'sibling': Complete family-wide attendance breakdown
    */
   async getMyAttendance(context = {}) {
     const userId = context.user?.id || context.user?.sub;
     if (!userId) {
       throw new ValidationError('Authenticated student user is required');
     }
-    return await this.getStudentAttendance(userId, context);
+
+    if (context.query?.groupBy === 'sibling' || context.query?.format === 'grouped') {
+      return await this.getStudentSiblingAttendance(userId, context);
+    }
+
+    const tenantId = context.tenantId || context.user?.tenantId;
+    const currentUser = await User.findById(userId).lean();
+    if (!currentUser) {
+      throw new NotFoundError('Student profile not found');
+    }
+
+    let targetStudentId = userId;
+    if (context.query?.studentId) {
+      const requestedId = context.query.studentId.toString();
+      const familyStudents = await this._resolveFamilyStudents(currentUser, tenantId);
+      const isSibling = familyStudents.some((s) => s._id.toString() === requestedId);
+      const role = context.user?.role;
+      const isAdminOrCoach = [ROLES.TENANT_ADMIN, ROLES.SUPER_ADMIN, ROLES.BRANCH_MANAGER, ROLES.COACH].includes(role);
+
+      if (isSibling || isAdminOrCoach) {
+        targetStudentId = requestedId;
+      } else {
+        throw new AuthorizationError('Requested student does not belong to your family sibling group');
+      }
+    }
+
+    return await this.getStudentAttendance(targetStudentId, context);
+  }
+
+  /**
+   * Complete sibling-wise breakdown of attendance, punch logs, and session history
+   */
+  async getStudentSiblingAttendance(id, context = {}) {
+    const tenantId = context.tenantId || context.user?.tenantId;
+    const currentUser = await User.findById(id).lean();
+    if (!currentUser) {
+      throw new NotFoundError('Student profile not found');
+    }
+
+    const familyStudents = await this._resolveFamilyStudents(currentUser, tenantId);
+    const familyStudentIds = familyStudents.map((s) => s._id);
+
+    const punchCriteria = [{ studentId: { $in: familyStudentIds } }];
+    const empNos = familyStudents.map((s) => s.employeeNo).filter(Boolean);
+    if (empNos.length > 0) {
+      punchCriteria.push({ employeeNo: { $in: empNos } });
+    }
+    const cards = familyStudents.map((s) => s.cardNo).filter(Boolean);
+    if (cards.length > 0) {
+      punchCriteria.push({ cardNo: { $in: cards } });
+    }
+
+    const [punchLogs, manualAttendances, enrollments] = await Promise.all([
+      AttendancePunchLog.find({
+        tenantId,
+        $or: punchCriteria,
+      })
+        .sort({ punchTime: -1 })
+        .limit(200)
+        .lean(),
+      Attendance.find({
+        tenantId,
+        'records.studentId': { $in: familyStudentIds },
+      })
+        .sort({ date: -1 })
+        .limit(100)
+        .lean(),
+      Enrollment.find({
+        tenantId,
+        studentId: { $in: familyStudentIds },
+        status: 'active',
+      })
+        .populate({
+          path: 'batchId',
+          select: 'name code sportId',
+          populate: { path: 'sportId', select: 'name' },
+        })
+        .lean(),
+    ]);
+
+    let familyTotalSessions = 0;
+    let familyTotalPresent = 0;
+    let familyTotalAbsent = 0;
+    let familyTotalExcused = 0;
+
+    const siblings = familyStudents.map((st) => {
+      const sIdStr = st._id.toString();
+      const sMetrics = this._calculateAttendanceMetrics(st, punchLogs, manualAttendances);
+      const enr = enrollments.find((e) => e.studentId?.toString() === sIdStr);
+
+      familyTotalSessions += sMetrics.totalSessions;
+      familyTotalPresent += sMetrics.presentCount;
+      familyTotalAbsent += sMetrics.absentCount;
+      familyTotalExcused += sMetrics.excusedCount;
+
+      return {
+        studentId: sIdStr,
+        _id: sIdStr,
+        firstName: st.firstName,
+        lastName: st.lastName || '',
+        fullName: `${st.firstName} ${st.lastName || ''}`.trim(),
+        employeeNo: st.employeeNo || '',
+        regNo: st.employeeNo || '',
+        phone: st.phone || '',
+        cardNo: st.cardNo || '',
+        avatar: st.avatar || '',
+        parentPhone: st.metadata?.parentPhone || currentUser.metadata?.parentPhone || currentUser.phone || '',
+        parentName: st.metadata?.parentName || currentUser.metadata?.parentName || '',
+        batchId: enr?.batchId?._id?.toString() || enr?.batchId || null,
+        batchName: enr?.batchId?.name || '',
+        sportName: enr?.batchId?.sportId?.name || '',
+        summary: {
+          totalSessions: sMetrics.totalSessions,
+          presentCount: sMetrics.presentCount,
+          absentCount: sMetrics.absentCount,
+          excusedCount: sMetrics.excusedCount,
+          attendancePercentage: sMetrics.attendancePercentage,
+        },
+        latestPunch: sMetrics.latestPunch
+          ? {
+              punchTime: sMetrics.latestPunch.punchTime,
+              verificationMode: sMetrics.latestPunch.verificationMode,
+              deviceName: sMetrics.latestPunch.deviceName,
+              deviceCode: sMetrics.latestPunch.deviceCode,
+              status: sMetrics.latestPunch.status,
+            }
+          : null,
+        punchLogs: sMetrics.punchLogs,
+        sessionHistory: sMetrics.sessionHistory,
+      };
+    });
+
+    const activeSessions = familyTotalPresent + familyTotalAbsent;
+    const overallPercentage =
+      activeSessions > 0 ? Math.round((familyTotalPresent / activeSessions) * 100) : 100;
+
+    return {
+      siblingGroupId: currentUser.siblingGroupId || currentUser.metadata?.siblingGroupId || null,
+      familyPhone: currentUser.metadata?.parentPhone || currentUser.phone || '',
+      parentName: currentUser.metadata?.parentName || '',
+      siblingCount: familyStudents.length,
+      familySummary: {
+        totalSessions: familyTotalSessions,
+        presentCount: familyTotalPresent,
+        absentCount: familyTotalAbsent,
+        excusedCount: familyTotalExcused,
+        overallAttendancePercentage: overallPercentage,
+      },
+      siblings,
+    };
+  }
+
+  /**
+   * Sibling group attendance query by studentId, familyPhone, or siblingGroupId
+   */
+  async getSiblingAttendance(context = {}) {
+    const query = context.query || {};
+    let targetUserId = query.studentId || context.user?.id || context.user?.sub;
+    if (!targetUserId && (query.familyPhone || query.siblingGroupId)) {
+      const matchCriteria = [];
+      if (query.siblingGroupId && mongoose.Types.ObjectId.isValid(query.siblingGroupId)) {
+        matchCriteria.push({ siblingGroupId: new mongoose.Types.ObjectId(query.siblingGroupId) });
+      }
+      if (query.familyPhone) {
+        matchCriteria.push({ phone: query.familyPhone });
+        matchCriteria.push({ 'metadata.parentPhone': query.familyPhone });
+      }
+      const st = await User.findOne({
+        tenantId: context.tenantId,
+        role: ROLES.STUDENT,
+        $or: matchCriteria,
+      });
+      if (st) {
+        targetUserId = st._id.toString();
+      }
+    }
+    if (!targetUserId) {
+      throw new ValidationError('studentId, familyPhone, or active student session is required');
+    }
+    return await this.getStudentSiblingAttendance(targetUserId, context);
   }
 
   /**

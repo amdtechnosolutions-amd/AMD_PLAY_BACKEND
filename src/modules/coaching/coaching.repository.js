@@ -105,7 +105,7 @@ export class AttendanceRepository extends BaseRepository {
         date,
         tenantId,
       })
-      .populate('records.studentId', 'firstName lastName email phone cardNo employeeNo avatar')
+      .populate('records.studentId', 'firstName lastName email phone cardNo employeeNo avatar siblingGroupId metadata')
       .lean();
   }
 

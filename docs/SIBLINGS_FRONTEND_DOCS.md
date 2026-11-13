@@ -24,6 +24,8 @@
 | 9 | **Sibling-Wise Payments & Financial Breakdown** | `GET` | `/students/my/payments` | `student` |
 | 10 | **Sibling Group Payments & Dues by Group/Phone** | `GET` | `/students/siblings/payments` | `tenant_admin`, `branch_manager`, `coach`, `student` |
 | 11 | **Student & Siblings Scorecards** | `GET` | `/students/:id/evaluations/latest` | `tenant_admin`, `branch_manager`, `coach`, `student` |
+| 12 | **Student & Sibling Attendance (Mobile Switcher)** | `GET` | `/students/my/attendance` | `student` |
+| 13 | **Sibling Group Consolidated Attendance** | `GET` | `/students/siblings/attendance` | `tenant_admin`, `branch_manager`, `coach`, `student` |
 
 ---
 
@@ -1081,6 +1083,349 @@ For mobile screens (e.g. **Payments Tab**, **Sibling Fee Cards**, or **Parent Bi
         ]
       }
     ]
+  }
+}
+```
+
+---
+
+## 12. Student & Sibling Attendance (Mobile App Profile Switcher)
+
+Retrieves personal and sibling attendance statistics, biometric punch logs, and coach session records for the logged-in student or parent.
+
+> [!TIP]
+> **Zero Re-Authentication Required!**  
+> Parents with multiple children can switch between sibling attendance histories simply by passing `?studentId=<siblingId>`.  
+> The endpoint automatically validates family group membership and updates `isSelected` accordingly.
+
+### Request Details
+- **Method:** `GET`
+- **URL Path:** `/api/v1/students/my/attendance`
+- **Optional Query Parameters:**
+  - `studentId`: Switch to attendance for a specific sibling (e.g. `?studentId=6ae3bfa56989d6280874ef35`)
+  - `groupBy`: Set to `sibling` for whole-family attendance breakdown (e.g. `?groupBy=sibling`)
+  - `format`: Alias for `groupBy` (`grouped` or `sibling`)
+- **Headers:**
+  ```http
+  Authorization: Bearer <STUDENT_OR_PARENT_TOKEN>
+  x-tenant-id: <TENANT_ID>
+  ```
+
+---
+
+### Success Response (`200 OK`) — Default / Sibling Switcher View
+
+```json
+{
+  "success": true,
+  "message": "Personal and sibling attendance records retrieved",
+  "data": {
+    "studentId": "6af1e2ae185e913f71898a76",
+    "studentName": "RUTHVI PANDIAN",
+    "regNo": "isabd006",
+    "employeeNo": "isabd006",
+    "batchId": "6ae3be5a51203568f13cc0e5",
+    "batchName": "kids_begineer",
+    "sportName": "Badminton",
+    "totalSessions": 12,
+    "presentCount": 11,
+    "absentCount": 1,
+    "excusedCount": 0,
+    "attendancePercentage": 92,
+    "punchLogs": [
+      {
+        "_id": "6af6bea6f59f66dbc7bb91c8",
+        "studentId": "6af1e2ae185e913f71898a76",
+        "studentName": "RUTHVI PANDIAN",
+        "punchTime": "2026-11-13T07:39:18.000Z",
+        "verificationMode": "face",
+        "deviceName": "ISA_BADMINTON_ACCESS",
+        "deviceCode": "DEV-ISA-ACCESS",
+        "status": "verified"
+      }
+    ],
+    "sessionHistory": [
+      {
+        "date": "2026-11-12",
+        "batchId": "6ae3be5a51203568f13cc0e5",
+        "status": "present",
+        "remarks": "IN: 07:00 AM | OUT: 08:00 AM (60m, FACE)",
+        "verificationMode": "face"
+      }
+    ],
+    "hasSiblings": true,
+    "siblingCount": 1,
+    "siblingGroupId": "6af4929053cf12c1662f4b5a",
+    "familyPhone": "9444154854",
+    "parentName": "ARUNMOZHIDEVAN",
+    "selectedStudent": {
+      "studentId": "6af1e2ae185e913f71898a76",
+      "fullName": "RUTHVI PANDIAN",
+      "firstName": "RUTHVI",
+      "lastName": "PANDIAN",
+      "regNo": "isabd006",
+      "phone": "9444154854",
+      "cardNo": "445982",
+      "avatar": "",
+      "batchName": "kids_begineer",
+      "sportName": "Badminton",
+      "attendancePercentage": 92,
+      "totalSessions": 12,
+      "presentCount": 11,
+      "absentCount": 1
+    },
+    "siblings": [
+      {
+        "studentId": "6af1e2ae185e913f71898a76",
+        "_id": "6af1e2ae185e913f71898a76",
+        "firstName": "RUTHVI",
+        "lastName": "PANDIAN",
+        "fullName": "RUTHVI PANDIAN",
+        "employeeNo": "isabd006",
+        "regNo": "isabd006",
+        "phone": "9444154854",
+        "cardNo": "445982",
+        "avatar": "",
+        "batchId": "6ae3be5a51203568f13cc0e5",
+        "batchName": "kids_begineer",
+        "sportName": "Badminton",
+        "totalSessions": 12,
+        "presentCount": 11,
+        "absentCount": 1,
+        "excusedCount": 0,
+        "attendancePercentage": 92,
+        "latestPunch": {
+          "punchTime": "2026-11-13T07:39:18.000Z",
+          "verificationMode": "face",
+          "deviceName": "ISA_BADMINTON_ACCESS",
+          "deviceCode": "DEV-ISA-ACCESS",
+          "status": "verified"
+        },
+        "isSelected": true
+      },
+      {
+        "studentId": "6ae3bfa56989d6280874ef35",
+        "_id": "6ae3bfa56989d6280874ef35",
+        "firstName": "keshika",
+        "lastName": "devan",
+        "fullName": "keshika devan",
+        "employeeNo": "isabd003",
+        "regNo": "isabd003",
+        "phone": "9894789477",
+        "cardNo": "492116",
+        "avatar": "",
+        "batchId": "6ae3be5a51203568f13cc0e5",
+        "batchName": "kids_begineer",
+        "sportName": "Badminton",
+        "totalSessions": 14,
+        "presentCount": 13,
+        "absentCount": 1,
+        "excusedCount": 0,
+        "attendancePercentage": 93,
+        "latestPunch": null,
+        "isSelected": false
+      }
+    ]
+  }
+}
+```
+
+---
+
+### Success Response (`200 OK`) — Grouped View (`?groupBy=sibling`)
+
+```json
+{
+  "success": true,
+  "message": "Personal and sibling attendance records retrieved",
+  "data": {
+    "siblingGroupId": "6af4929053cf12c1662f4b5a",
+    "familyPhone": "9444154854",
+    "parentName": "ARUNMOZHIDEVAN",
+    "siblingCount": 2,
+    "familySummary": {
+      "totalSessions": 26,
+      "presentCount": 24,
+      "absentCount": 2,
+      "excusedCount": 0,
+      "overallAttendancePercentage": 92
+    },
+    "siblings": [
+      {
+        "studentId": "6af1e2ae185e913f71898a76",
+        "fullName": "RUTHVI PANDIAN",
+        "regNo": "isabd006",
+        "batchName": "kids_begineer",
+        "sportName": "Badminton",
+        "summary": {
+          "totalSessions": 12,
+          "presentCount": 11,
+          "absentCount": 1,
+          "excusedCount": 0,
+          "attendancePercentage": 92
+        },
+        "latestPunch": { ... },
+        "punchLogs": [ ... ],
+        "sessionHistory": [ ... ]
+      },
+      {
+        "studentId": "6ae3bfa56989d6280874ef35",
+        "fullName": "keshika devan",
+        "regNo": "isabd003",
+        "batchName": "kids_begineer",
+        "sportName": "Badminton",
+        "summary": {
+          "totalSessions": 14,
+          "presentCount": 13,
+          "absentCount": 1,
+          "excusedCount": 0,
+          "attendancePercentage": 93
+        },
+        "latestPunch": null,
+        "punchLogs": [ ... ],
+        "sessionHistory": [ ... ]
+      }
+    ]
+  }
+}
+```
+
+---
+
+## 13. Consolidated Sibling Group Attendance (Admin / Coach / Universal Query)
+
+Retrieve consolidated sibling-wise attendance statistics, biometric punch logs, and session breakdown for any family using their `siblingGroupId`, `familyPhone`, or `studentId`.
+
+### Request Details
+- **Method:** `GET`
+- **URL Path:** `/api/v1/students/siblings/attendance`
+- **Query Parameters (Provide at least one):**
+  - `siblingGroupId`: Sibling Group ID (e.g. `6af4929053cf12c1662f4b5a`)
+  - `familyPhone`: Parent mobile number (e.g. `9894789477`)
+  - `studentId`: Student ID of any sibling in the family (e.g. `6af1e2ae185e913f71898a76`)
+- **Headers:**
+  ```http
+  Authorization: Bearer <TOKEN>
+  x-tenant-id: <TENANT_ID>
+  ```
+
+---
+
+## 14. Flutter / Mobile App Sibling Attendance UI Example
+
+```dart
+// Flutter Attendance Screen with Sibling Tabs
+class SiblingAttendanceScreen extends StatefulWidget {
+  @override
+  _SiblingAttendanceScreenState createState() => _SiblingAttendanceScreenState();
+}
+
+class _SiblingAttendanceScreenState extends State<SiblingAttendanceScreen> {
+  String? selectedStudentId;
+  Map<String, dynamic>? attendanceData;
+  bool isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    loadAttendance();
+  }
+
+  Future<void> loadAttendance({String? studentId}) async {
+    setState(() => isLoading = true);
+    final url = studentId != null 
+        ? '/api/v1/students/my/attendance?studentId=$studentId'
+        : '/api/v1/students/my/attendance';
+    
+    final response = await apiClient.get(url);
+    setState(() {
+      attendanceData = response.data['data'];
+      selectedStudentId = attendanceData?['studentId'];
+      isLoading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (isLoading) return Center(child: CircularProgressIndicator());
+
+    final siblings = (attendanceData?['siblings'] as List<dynamic>?) ?? [];
+    final hasSiblings = attendanceData?['hasSiblings'] == true;
+
+    return Scaffold(
+      appBar: AppBar(title: Text('Student Attendance')),
+      body: Column(
+        children: [
+          // Sibling Profile Switcher Pills / Tabs
+          if (hasSiblings)
+            Container(
+              height: 50,
+              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: siblings.length,
+                separatorBuilder: (_, __) => SizedBox(width: 8),
+                itemBuilder: (context, index) {
+                  final s = siblings[index];
+                  final isSelected = s['isSelected'] == true;
+                  return ChoiceChip(
+                    avatar: Icon(Icons.person, size: 16),
+                    label: Text('${s['firstName']} (${s['attendancePercentage']}%)'),
+                    selected: isSelected,
+                    selectedColor: Theme.of(context).primaryColor,
+                    onSelected: (selected) {
+                      if (selected && s['studentId'] != selectedStudentId) {
+                        loadAttendance(studentId: s['studentId']);
+                      }
+                    },
+                  );
+                },
+              ),
+            ),
+
+          // Main Attendance Card
+          Card(
+            margin: EdgeInsets.all(16),
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  Text(
+                    attendanceData?['studentName'] ?? '',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  Text('${attendanceData?['batchName']} • ${attendanceData?['sportName']}'),
+                  SizedBox(height: 12),
+                  Text(
+                    '${attendanceData?['attendancePercentage']}%',
+                    style: TextStyle(fontSize: 48, fontWeight: FontWeight.w900, color: Colors.green),
+                  ),
+                  Text('Present: ${attendanceData?['presentCount']} / Total: ${attendanceData?['totalSessions']} sessions'),
+                ],
+              ),
+            ),
+          ),
+
+          // Punch Logs & Session History
+          Expanded(
+            child: ListView.builder(
+              itemCount: (attendanceData?['sessionHistory'] as List?)?.length ?? 0,
+              itemBuilder: (context, index) {
+                final session = attendanceData?['sessionHistory'][index];
+                return ListTile(
+                  leading: Icon(
+                    session['status'] == 'present' ? Icons.check_circle : Icons.cancel,
+                    color: session['status'] == 'present' ? Colors.green : Colors.red,
+                  ),
+                  title: Text(session['date']),
+                  subtitle: Text(session['remarks'] ?? ''),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 ```

@@ -155,9 +155,31 @@ export const markStudentAttendanceSchema = {
 };
 
 export const getMyAttendanceSchema = {
-  description: '[Roles: student, member, customer] Get personal attendance history and monthly punch logs (Mobile App Student Dashboard)',
+  description: '[Roles: student, member, customer] Get personal and sibling attendance history, percentage, and monthly punch logs (Mobile App Student Dashboard, supports ?studentId=<id> profile switcher and ?groupBy=sibling)',
   tags: ['Students Management'],
   security: [{ bearerAuth: [] }],
+  querystring: {
+    type: 'object',
+    properties: {
+      studentId: { type: 'string', description: 'Selected sibling student ID (for profile switcher)' },
+      groupBy: { type: 'string', enum: ['sibling', 'none'], description: 'Group attendance by sibling profile' },
+      format: { type: 'string', description: 'Alternative alias for groupBy' },
+    },
+  },
+};
+
+export const getSiblingAttendanceSchema = {
+  description: '[Roles: tenant_admin, branch_manager, coach, student] Get consolidated sibling-wise attendance statistics, punch logs, and session breakdown by siblingGroupId, studentId, or familyPhone',
+  tags: ['Students Management', 'Attendance Management'],
+  security: [{ bearerAuth: [] }],
+  querystring: {
+    type: 'object',
+    properties: {
+      studentId: { type: 'string', description: 'Student ID in family' },
+      siblingGroupId: { type: 'string', description: 'Sibling Group ID' },
+      familyPhone: { type: 'string', description: 'Parent / Family Phone' },
+    },
+  },
 };
 
 export const getMySiblingsSchema = {
