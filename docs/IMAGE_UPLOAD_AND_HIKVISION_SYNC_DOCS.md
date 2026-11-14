@@ -342,3 +342,4 @@ Future<Map<String, dynamic>> uploadFacePhoto({
    If the user already has a face on the terminal (`deviceUserAlreadyExistFace`), the backend automatically issues a `PUT /ISAPI/Intelligent/FDLib/FDSetUp?format=json` multipart request to overwrite the existing face data.
 4. **Offline Fault Tolerance (`DeviceSyncQueue`)**:
    If a biometric terminal is offline or unreachable during the upload, the backend stores the job in `DeviceSyncQueue` (`action: "UPLOAD_FACE"`). The queue worker automatically retries pushing the face once the terminal comes back online.
+

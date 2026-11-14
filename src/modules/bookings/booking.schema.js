@@ -189,5 +189,157 @@ export const verifyRazorpayBookingPaymentSchema = {
   },
 };
 
+export const createCashfreeBookingOrderSchema = {
+  description: '[Roles: customer, member, coach, student, tenant_admin] Initialize Cashfree Payment Order for Court Slot Booking (single or multi-slot)',
+  tags: ['Bookings Management', 'Finance & Monthly Fees'],
+  security: [{ bearerAuth: [] }],
+  body: {
+    type: 'object',
+    properties: {
+      resourceId: { type: 'string', minLength: 24, maxLength: 24, description: 'Court / Resource ID (for single slot)' },
+      date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'YYYY-MM-DD' },
+      startTime: { type: 'string', pattern: '^\\d{2}:\\d{2}$', description: 'HH:mm (e.g. 18:00)' },
+      endTime: { type: 'string', pattern: '^\\d{2}:\\d{2}$', description: 'HH:mm (e.g. 19:00)' },
+      orderId: { type: 'string', description: 'Optional custom order ID' },
+      holdId: { type: 'string', description: 'Optional 5-min slot hold ID' },
+      returnUrl: { type: 'string', description: 'Post-payment redirect URL' },
+      notifyUrl: { type: 'string', description: 'Webhook notification URL' },
+      phone: { type: 'string', description: 'Customer phone number' },
+      email: { type: 'string', description: 'Customer email address' },
+      name: { type: 'string', description: 'Customer full name' },
+      customer: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          phone: { type: 'string' },
+          email: { type: 'string' },
+          name: { type: 'string' },
+        },
+      },
+      slots: {
+        type: 'array',
+        items: bookingSlotItemSchema,
+        description: 'Array of slots to include in the Cashfree order',
+      },
+    },
+  },
+};
+
+export const verifyCashfreeBookingPaymentSchema = {
+  description: '[Roles: customer, member, coach, student, tenant_admin] Verify Cashfree payment and finalize confirmed court booking with access PIN pass (single or multi-slot)',
+  tags: ['Bookings Management', 'Finance & Monthly Fees'],
+  security: [{ bearerAuth: [] }],
+  body: {
+    type: 'object',
+    properties: {
+      orderId: { type: 'string', description: 'Cashfree Order ID' },
+      cashfree_order_id: { type: 'string', description: 'Alias for Cashfree Order ID' },
+      cfPaymentId: { type: 'string', description: 'Cashfree Payment ID' },
+      cashfree_payment_id: { type: 'string', description: 'Alias for Cashfree Payment ID' },
+      resourceId: { type: 'string', minLength: 24, maxLength: 24, description: 'Court / Resource ID' },
+      date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'YYYY-MM-DD' },
+      startTime: { type: 'string', pattern: '^\\d{2}:\\d{2}$', description: 'HH:mm (e.g. 18:00)' },
+      endTime: { type: 'string', pattern: '^\\d{2}:\\d{2}$', description: 'HH:mm (e.g. 19:00)' },
+      holdId: { type: 'string', description: 'Optional slot hold ID' },
+      phone: { type: 'string', description: 'Customer phone number' },
+      email: { type: 'string', description: 'Customer email address' },
+      name: { type: 'string', description: 'Customer full name' },
+      customer: {
+        type: 'object',
+        properties: {
+          phone: { type: 'string' },
+          email: { type: 'string' },
+          name: { type: 'string' },
+        },
+      },
+      notes: { type: 'string', description: 'Booking notes / remarks' },
+      slots: {
+        type: 'array',
+        items: bookingSlotItemSchema,
+        description: 'Array of slots belonging to this verified payment',
+      },
+    },
+  },
+};
+
+export const createUnifiedBookingPaymentOrderSchema = {
+  description: '[Roles: customer, member, coach, student, tenant_admin] Create Payment Order (dynamically routes to Cashfree or Razorpay according to Academy Admin Settings)',
+  tags: ['Bookings Management', 'Finance & Monthly Fees'],
+  security: [{ bearerAuth: [] }],
+  body: {
+    type: 'object',
+    properties: {
+      gateway: { type: 'string', enum: ['cashfree', 'razorpay'], description: 'Optional gateway override (defaults to tenant activeGateway)' },
+      resourceId: { type: 'string', minLength: 24, maxLength: 24, description: 'Court / Resource ID (for single slot)' },
+      date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'YYYY-MM-DD' },
+      startTime: { type: 'string', pattern: '^\\d{2}:\\d{2}$', description: 'HH:mm (e.g. 18:00)' },
+      endTime: { type: 'string', pattern: '^\\d{2}:\\d{2}$', description: 'HH:mm (e.g. 19:00)' },
+      orderId: { type: 'string', description: 'Optional custom order ID' },
+      holdId: { type: 'string', description: 'Optional 5-min slot hold ID' },
+      returnUrl: { type: 'string', description: 'Post-payment redirect URL (Cashfree)' },
+      phone: { type: 'string', description: 'Customer phone number' },
+      email: { type: 'string', description: 'Customer email address' },
+      name: { type: 'string', description: 'Customer full name' },
+      customer: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          phone: { type: 'string' },
+          email: { type: 'string' },
+          name: { type: 'string' },
+        },
+      },
+      slots: {
+        type: 'array',
+        items: bookingSlotItemSchema,
+        description: 'Array of slots to include in the order',
+      },
+    },
+  },
+};
+
+export const verifyUnifiedBookingPaymentSchema = {
+  description: '[Roles: customer, member, coach, student, tenant_admin] Verify Payment and finalize booking (automatically supports Cashfree or Razorpay)',
+  tags: ['Bookings Management', 'Finance & Monthly Fees'],
+  security: [{ bearerAuth: [] }],
+  body: {
+    type: 'object',
+    properties: {
+      gateway: { type: 'string', enum: ['cashfree', 'razorpay'], description: 'Payment gateway identifier' },
+      // Cashfree fields
+      orderId: { type: 'string', description: 'Cashfree Order ID' },
+      cashfree_order_id: { type: 'string', description: 'Alias for Cashfree Order ID' },
+      cfPaymentId: { type: 'string', description: 'Cashfree Payment ID' },
+      cashfree_payment_id: { type: 'string', description: 'Alias for Cashfree Payment ID' },
+      // Razorpay fields
+      razorpay_order_id: { type: 'string', description: 'Razorpay Order ID' },
+      razorpay_payment_id: { type: 'string', description: 'Razorpay Payment ID' },
+      razorpay_signature: { type: 'string', description: 'Razorpay HMAC signature' },
+      // Common booking fields
+      resourceId: { type: 'string', minLength: 24, maxLength: 24, description: 'Court / Resource ID' },
+      date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'YYYY-MM-DD' },
+      startTime: { type: 'string', pattern: '^\\d{2}:\\d{2}$', description: 'HH:mm' },
+      endTime: { type: 'string', pattern: '^\\d{2}:\\d{2}$', description: 'HH:mm' },
+      holdId: { type: 'string' },
+      phone: { type: 'string' },
+      email: { type: 'string' },
+      name: { type: 'string' },
+      customer: {
+        type: 'object',
+        properties: {
+          phone: { type: 'string' },
+          email: { type: 'string' },
+          name: { type: 'string' },
+        },
+      },
+      notes: { type: 'string' },
+      slots: {
+        type: 'array',
+        items: bookingSlotItemSchema,
+      },
+    },
+  },
+};
+
 
 

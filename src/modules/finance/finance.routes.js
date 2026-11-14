@@ -81,6 +81,14 @@ export default async function financeRoutes(fastify) {
     handler: financeController.handleRazorpayWebhook.bind(financeController),
   });
 
+  fastify.post('/finance/webhook/cashfree', {
+    schema: {
+      description: 'Cashfree payment & refund webhook listener',
+      tags: ['Finance & Monthly Fees'],
+    },
+    handler: financeController.handleCashfreeWebhook.bind(financeController),
+  });
+
   // Monthly Coaching & Member Fee Billing
   fastify.post('/finance/monthly-fees/generate', {
     schema: {
@@ -197,6 +205,49 @@ export default async function financeRoutes(fastify) {
     },
     preHandler: [fastify.authenticate, requireTenantContext],
     handler: financeController.verifyRazorpayFeePayment.bind(financeController),
+  });
+
+  // Cashfree Order Creation for Student Monthly Fee
+  fastify.post('/finance/monthly-fees/:id/cashfree/order', {
+    schema: {
+      description: '[Roles: student, tenant_admin] Initialize Cashfree Payment Order for student coaching fee invoice',
+      tags: ['Finance & Monthly Fees', 'Students Management'],
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object',
+        required: ['id'],
+        properties: {
+          id: { type: 'string', minLength: 24, maxLength: 24, description: 'Monthly fee invoice ID' },
+        },
+      },
+    },
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: financeController.createCashfreeFeeOrder.bind(financeController),
+  });
+
+  // Cashfree Payment Verification & Fee Settlement
+  fastify.post('/finance/monthly-fees/:id/cashfree/verify', {
+    schema: {
+      description: '[Roles: student, tenant_admin] Verify Cashfree payment, settle student coaching fee invoice, and issue receipt',
+      tags: ['Finance & Monthly Fees', 'Students Management'],
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object',
+        required: ['id'],
+        properties: {
+          id: { type: 'string', minLength: 24, maxLength: 24, description: 'Monthly fee invoice ID' },
+        },
+      },
+      body: {
+        type: 'object',
+        properties: {
+          orderId: { type: 'string', description: 'Cashfree Order ID' },
+          cfPaymentId: { type: 'string', description: 'Cashfree Payment ID' },
+        },
+      },
+    },
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: financeController.verifyCashfreeFeePayment.bind(financeController),
   });
 
   // Reports & Financial Summary

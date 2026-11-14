@@ -49,7 +49,7 @@ const paymentSchema = new mongoose.Schema(
     },
     gateway: {
       type: String,
-      enum: ['razorpay', 'stripe', 'manual', 'cash'],
+      enum: ['razorpay', 'cashfree', 'stripe', 'manual', 'cash'],
       default: 'manual',
     },
     gatewayOrderId: {

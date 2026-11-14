@@ -96,7 +96,7 @@ export const recordPaymentSchema = {
       },
       gateway: {
         type: 'string',
-        enum: ['razorpay', 'stripe', 'manual', 'cash'],
+        enum: ['razorpay', 'cashfree', 'stripe', 'manual', 'cash'],
       },
       gatewayOrderId: { type: 'string' },
       gatewayPaymentId: { type: 'string' },

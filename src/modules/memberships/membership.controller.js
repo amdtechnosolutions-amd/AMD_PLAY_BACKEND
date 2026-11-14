@@ -118,6 +118,30 @@ export class MembershipController extends BaseController {
     );
   }
 
+  async createCashfreeOrder(request, reply) {
+    const context = this._extractContext(request);
+    const order = await membershipService.createCashfreeOrder(request.body, context);
+
+    return reply.status(201).send(
+      apiSuccess({
+        message: 'Cashfree membership order created successfully',
+        data: order,
+      })
+    );
+  }
+
+  async verifyCashfreePayment(request, reply) {
+    const context = this._extractContext(request);
+    const subscription = await membershipService.verifyCashfreePayment(request.body, context);
+
+    return reply.status(201).send(
+      apiSuccess({
+        message: 'Cashfree payment verified and membership subscription activated',
+        data: subscription,
+      })
+    );
+  }
+
   async assignSubscriptionTimeSlot(request, reply) {
     const context = this._extractContext(request);
     const subscription = await membershipService.assignSubscriptionTimeSlot(

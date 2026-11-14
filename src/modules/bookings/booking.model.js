@@ -41,7 +41,7 @@ const bookingPaymentSchema = new mongoose.Schema(
     },
     method: {
       type: String,
-      enum: ['upi', 'card', 'cash', 'wallet', 'online', 'free', 'razorpay'],
+      enum: ['upi', 'card', 'cash', 'wallet', 'online', 'free', 'razorpay', 'cashfree'],
       default: 'online',
     },
     transactionId: {

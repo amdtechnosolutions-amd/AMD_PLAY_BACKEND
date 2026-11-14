@@ -11,6 +11,7 @@ import { slotService } from '../slots/slot.service.js';
 import { settingsService } from '../settings/settings.service.js';
 import { wabridgeService } from '../notifications/wabridge.service.js';
 import { razorpayService } from '../finance/razorpay.service.js';
+import { cashfreeService } from '../finance/cashfree.service.js';
 import { HikvisionService } from '../iot/hikvision.service.js';
 import { Device } from '../iot/device.model.js';
 import { deviceSyncQueueService } from '../iot/device-sync-queue.service.js';
@@ -345,8 +346,9 @@ export class BookingService extends BaseService {
     const globalBufferedEnd = formatLocal(new Date(maxEnd.getTime() + 15 * 60000));
 
     const createdDocs = [];
-    const paymentMethod = data.paymentMethod || (data.razorpay_payment_id ? 'razorpay' : 'online');
-    const transactionId = data.razorpay_payment_id || data.transactionId || `TXN-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+    const isCashfree = data.paymentMethod === 'cashfree' || !!data.cashfree_payment_id || !!data.cashfree_order_id;
+    const paymentMethod = data.paymentMethod || (isCashfree ? 'cashfree' : (data.razorpay_payment_id ? 'razorpay' : 'online'));
+    const transactionId = data.cashfree_payment_id || data.razorpay_payment_id || data.transactionId || `TXN-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
 
     for (let i = 0; i < pricedSlots.length; i++) {
       const { slotItem, resource, lockKey, pricing } = pricedSlots[i];
@@ -583,7 +585,11 @@ export class BookingService extends BaseService {
     try {
       const rawMethod = (paymentMethod || 'upi').toLowerCase();
       const method = ['upi', 'card', 'cash', 'netbanking', 'wallet'].includes(rawMethod) ? rawMethod : 'upi';
-      const gateway = data.razorpay_payment_id || data.razorpay_order_id ? 'razorpay' : (method === 'cash' ? 'cash' : 'manual');
+      const gateway = isCashfree
+        ? 'cashfree'
+        : (data.razorpay_payment_id || data.razorpay_order_id ? 'razorpay' : (method === 'cash' ? 'cash' : 'manual'));
+      const gatewayOrderId = data.cashfree_order_id || data.razorpay_order_id || '';
+      const gatewayPaymentId = data.cashfree_payment_id || data.razorpay_payment_id || transactionId;
 
       await razorpayService.recordPayment({
         tenantId: resolvedTenantId,
@@ -595,8 +601,8 @@ export class BookingService extends BaseService {
         referenceId: groupBookingNumber,
         paymentMethod: method,
         gateway,
-        gatewayOrderId: data.razorpay_order_id || '',
-        gatewayPaymentId: data.razorpay_payment_id || transactionId,
+        gatewayOrderId,
+        gatewayPaymentId,
         status: 'success',
         notes: data.notes || (isMulti ? `Multi-Slot Booking (${pricedSlots.length} slots)` : `Court Booking: ${createdDocs[0].resource.name} (${pricedSlots[0].slotItem.startTime} - ${pricedSlots[0].slotItem.endTime})`),
         metadata: {
@@ -1168,6 +1174,321 @@ export class BookingService extends BaseService {
       },
       context
     );
+  }
+
+  /**
+   * Initialize a Cashfree Payment Order for Court Slot Booking
+   * Supports both single slot and multi-slot / multi-date batches
+   */
+  async createCashfreeOrder(data, context = {}) {
+    const isMulti = Array.isArray(data.slots) && data.slots.length > 0;
+    const slotsList = isMulti ? data.slots : [data];
+
+    if (slotsList.length === 0) {
+      throw new ValidationError('At least one slot is required to create a payment order');
+    }
+
+    const { resolvedTenantId: initialTenantId, primaryResource: initResource, userId, user: initialUser } =
+      await this._resolveUserAndTenant(data, context, slotsList);
+
+    if (!initialTenantId) {
+      throw new ValidationError('Tenant context is required to create a payment order');
+    }
+
+    if (!userId) {
+      throw new ValidationError('Authenticated user or customer details are required');
+    }
+
+    let user = initialUser;
+    let totalBasePrice = 0;
+    const slotSummaries = [];
+    let primaryResource = initResource;
+    let resolvedTenantId = initialTenantId;
+
+    for (let i = 0; i < slotsList.length; i++) {
+      const slotItem = slotsList[i];
+      if (!slotItem.resourceId || !slotItem.date || !slotItem.startTime || !slotItem.endTime) {
+        throw new ValidationError(`Slot ${i + 1} requires resourceId, date, startTime, and endTime`);
+      }
+
+      let resource = await resourceRepository.findById(slotItem.resourceId, resolvedTenantId);
+      if (!resource) {
+        resource = await resourceRepository.findById(slotItem.resourceId);
+        if (resource) {
+          resolvedTenantId = resource.tenantId;
+        } else {
+          throw new NotFoundError(`Court/Resource with ID '${slotItem.resourceId}' not found`);
+        }
+      }
+
+      if (!primaryResource) primaryResource = resource;
+
+      if (resource.status === 'maintenance' || resource.maintenance?.isUnderMaintenance) {
+        throw new ConflictError(`Court '${resource.name}' is currently under maintenance and cannot be booked`);
+      }
+
+      const isBooked = await bookingRepository.isSlotBooked(resource._id, slotItem.date, slotItem.startTime, resolvedTenantId);
+      if (isBooked) {
+        throw new ConflictError(`Slot ${slotItem.startTime} - ${slotItem.endTime} on ${slotItem.date} is already booked`);
+      }
+
+      const pricingDetails = slotService._calculateSlotPrice(
+        resource.pricing,
+        slotItem.date,
+        slotItem.startTime,
+        context.user
+      );
+      const slotBasePrice = pricingDetails.finalPrice ?? pricingDetails.basePrice ?? 0;
+      totalBasePrice += slotBasePrice;
+
+      slotSummaries.push({
+        resourceId: resource._id,
+        resourceName: resource.name,
+        code: resource.code,
+        date: slotItem.date,
+        startTime: slotItem.startTime,
+        endTime: slotItem.endTime,
+        basePrice: slotBasePrice,
+      });
+    }
+
+    const tenant = await tenantRepository.findById(resolvedTenantId);
+    const taxRate = tenant?.settings?.taxPercentage ?? 18;
+    const taxAmount = Math.round((totalBasePrice * taxRate) / 100);
+    const discountAmount = 0;
+    const totalAmount = totalBasePrice + taxAmount - discountAmount;
+
+    if (!user) {
+      user = (await userRepository.findById(userId, resolvedTenantId)) || (await userRepository.findById(userId));
+    }
+
+    const customerDetails = {
+      id: userId.toString(),
+      name: user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() : (data.name || data.customer?.name || 'Player'),
+      email: user?.email || data.email || data.customer?.email || context.user?.email || 'player@apexacademy.com',
+      phone: user?.phone || data.phone || data.customer?.phone || context.user?.phone || '9999999999',
+    };
+
+    // Create Cashfree Order
+    const cfOrder = await cashfreeService.createOrder({
+      orderId: data.orderId,
+      amount: totalAmount,
+      currency: 'INR',
+      customer: customerDetails,
+      notes: {
+        type: 'booking',
+        tenantId: resolvedTenantId.toString(),
+        userId: userId.toString(),
+        isMultiSlot: isMulti ? 'true' : 'false',
+        slotsCount: slotSummaries.length.toString(),
+        resourceId: primaryResource._id.toString(),
+        resourceName: primaryResource.name,
+        date: slotSummaries[0].date,
+        startTime: slotSummaries[0].startTime,
+        endTime: slotSummaries[0].endTime,
+      },
+      returnUrl: data.returnUrl || '',
+      notifyUrl: data.notifyUrl || '',
+      branchId: primaryResource.branchId,
+      tenantId: resolvedTenantId,
+    });
+
+    const pricingInfo = {
+      basePrice: totalBasePrice,
+      taxRate,
+      taxAmount,
+      discountAmount,
+      totalAmount,
+    };
+
+    if (!isMulti) {
+      return {
+        orderId: cfOrder.orderId,
+        cfOrderId: cfOrder.cfOrderId,
+        paymentSessionId: cfOrder.paymentSessionId,
+        amount: totalAmount,
+        currency: 'INR',
+        gateway: 'cashfree',
+        environment: cfOrder.environment,
+        pricing: pricingInfo,
+        slot: slotSummaries[0],
+        customer: customerDetails,
+      };
+    }
+
+    return {
+      orderId: cfOrder.orderId,
+      cfOrderId: cfOrder.cfOrderId,
+      paymentSessionId: cfOrder.paymentSessionId,
+      amount: totalAmount,
+      currency: 'INR',
+      gateway: 'cashfree',
+      environment: cfOrder.environment,
+      isMultiSlot: true,
+      totalSlots: slotSummaries.length,
+      pricing: pricingInfo,
+      slots: slotSummaries,
+      customer: customerDetails,
+    };
+  }
+
+  /**
+   * Verify Cashfree payment and finalize court booking confirmation (single or multi-slot)
+   */
+  async verifyCashfreePayment(data, context = {}) {
+    const orderId = data.orderId || data.cashfree_order_id || data.order_id;
+    const cfPaymentId = data.cfPaymentId || data.cashfree_payment_id || data.cf_payment_id;
+
+    if (!orderId && !cfPaymentId) {
+      throw new ValidationError('Cashfree Order ID (orderId or cashfree_order_id) is required');
+    }
+
+    const firstResourceId = data.resourceId || data.slots?.[0]?.resourceId;
+    if (!firstResourceId) {
+      throw new ValidationError('resourceId or slots array is required');
+    }
+
+    let resource = await resourceRepository.findById(firstResourceId, context.tenantId);
+    if (!resource) {
+      resource = await resourceRepository.findById(firstResourceId);
+      if (resource) {
+        context.tenantId = resource.tenantId;
+      } else {
+        throw new NotFoundError(`Court/Resource with ID '${firstResourceId}' not found`);
+      }
+    }
+
+    // Verify Cashfree payment status
+    const cfVerification = await cashfreeService.verifyPayment({
+      orderId: orderId || cfPaymentId,
+      cfPaymentId,
+      branchId: resource.branchId,
+      tenantId: context.tenantId,
+    });
+
+    const paymentTxnId = cfVerification.paymentId || cfPaymentId || orderId;
+
+    // Idempotency check: If booking is already confirmed for this payment/order ID, return it immediately
+    const existingBookings = await bookingRepository.model.find({
+      $or: [
+        { 'payment.transactionId': paymentTxnId },
+        { 'payment.transactionId': orderId },
+      ],
+    });
+
+    if (existingBookings && existingBookings.length > 0) {
+      const resolvedTenantId = existingBookings[0].tenantId;
+      const populatedBookings = await Promise.all(
+        existingBookings.map((b) => bookingRepository.findByIdWithDetails(b._id, resolvedTenantId))
+      );
+      if (existingBookings.length === 1 && !existingBookings[0].isMultiSlot) {
+        return populatedBookings[0];
+      }
+      const first = existingBookings[0];
+      return {
+        _id: first._id,
+        groupId: first.groupId,
+        groupBookingNumber: first.groupBookingNumber || first.bookingNumber,
+        bookingNumber: first.groupBookingNumber || first.bookingNumber,
+        isMultiSlot: true,
+        totalSlots: populatedBookings.length,
+        status: first.status,
+        accessCode: first.accessCode,
+        qrCodeUrl: first.qrCodeUrl,
+        pricing: first.pricing,
+        payment: first.payment,
+        bookings: populatedBookings,
+        slots: populatedBookings.map((b) => ({
+          id: b._id,
+          bookingNumber: b.bookingNumber,
+          date: b.date,
+          startTime: b.startTime,
+          endTime: b.endTime,
+          courtName: b.resourceId?.name,
+          courtCode: b.resourceId?.code,
+          sport: b.sportId?.name,
+          accessCode: b.accessCode,
+          qrCodeUrl: b.qrCodeUrl,
+          pricing: b.pricing,
+        })),
+      };
+    }
+
+    // Create confirmed booking with Cashfree payment details
+    return await this.createBooking(
+      {
+        ...data,
+        paymentMethod: 'cashfree',
+        cashfree_payment_id: paymentTxnId,
+        cashfree_order_id: orderId,
+        transactionId: paymentTxnId,
+      },
+      context
+    );
+  }
+
+  /**
+   * Unified Gateway Payment Order: dynamically routes to Cashfree or Razorpay
+   * based on tenant settings or requested gateway
+   */
+  async createPaymentOrder(data, context = {}) {
+    let targetGateway = (data.gateway || '').toLowerCase();
+
+    if (!targetGateway) {
+      const tenantId = context.tenantId || data.tenantId;
+      if (tenantId) {
+        try {
+          const tenantSettings = await settingsService.getSettings(tenantId);
+          targetGateway = (tenantSettings?.paymentGateways?.activeGateway || 'razorpay').toLowerCase();
+        } catch (_) {
+          targetGateway = 'razorpay';
+        }
+      } else {
+        targetGateway = 'razorpay';
+      }
+    }
+
+    if (targetGateway === 'cashfree') {
+      const order = await this.createCashfreeOrder(data, context);
+      return { ...order, gateway: 'cashfree' };
+    }
+
+    const order = await this.createRazorpayOrder(data, context);
+    return { ...order, gateway: 'razorpay' };
+  }
+
+  /**
+   * Unified Gateway Payment Verification: routes to Cashfree or Razorpay
+   * by inspecting transaction signatures / IDs or active gateway
+   */
+  async verifyPayment(data, context = {}) {
+    let targetGateway = (data.gateway || '').toLowerCase();
+
+    if (!targetGateway) {
+      if (data.razorpay_payment_id || data.razorpay_signature) {
+        targetGateway = 'razorpay';
+      } else if (data.cashfree_order_id || data.paymentSessionId || (data.orderId && !data.razorpay_payment_id)) {
+        targetGateway = 'cashfree';
+      } else {
+        const tenantId = context.tenantId || data.tenantId;
+        if (tenantId) {
+          try {
+            const tenantSettings = await settingsService.getSettings(tenantId);
+            targetGateway = (tenantSettings?.paymentGateways?.activeGateway || 'razorpay').toLowerCase();
+          } catch (_) {
+            targetGateway = 'razorpay';
+          }
+        } else {
+          targetGateway = 'razorpay';
+        }
+      }
+    }
+
+    if (targetGateway === 'cashfree') {
+      return await this.verifyCashfreePayment(data, context);
+    }
+
+    return await this.verifyRazorpayPayment(data, context);
   }
 
   /**

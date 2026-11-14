@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { expenseRepository, paymentRepository } from './finance.repository.js';
 import { MonthlyFee } from './monthly-fee.model.js';
+import { cashfreeService } from './cashfree.service.js';
 import { ValidationError, NotFoundError } from '../../errors/AppError.js';
 import { env } from '../../config/env.js';
 
@@ -181,6 +182,62 @@ export class FinanceService {
     }
 
     return { processed: true, event: eventName, paymentId: payment._id, status: payment.status };
+  }
+
+  async processCashfreeWebhook(event, signature, timestamp, rawBody) {
+    const isValid = await cashfreeService.verifyWebhookSignature({
+      rawBody,
+      timestamp,
+      signature,
+    });
+
+    if (!isValid && !env.isDev && !env.isTest) {
+      throw new ValidationError('Invalid Cashfree webhook signature');
+    }
+
+    const eventType = event.type || event.event || '';
+    const paymentData = event.data?.payment;
+    const orderData = event.data?.order;
+
+    const gatewayPaymentId = paymentData?.cf_payment_id ? String(paymentData.cf_payment_id) : '';
+    const gatewayOrderId = orderData?.order_id || '';
+
+    if (!gatewayPaymentId && !gatewayOrderId) {
+      return { processed: true, message: 'No payment or order details found in Cashfree webhook' };
+    }
+
+    let payment = null;
+    if (gatewayPaymentId) {
+      payment = await this.paymentRepository.findByGatewayPaymentId(gatewayPaymentId);
+    }
+    if (!payment && gatewayOrderId) {
+      payment = await this.paymentRepository.model.findOne({ gatewayOrderId });
+    }
+
+    if (!payment) {
+      return { processed: false, message: `Payment for order ${gatewayOrderId} / ${gatewayPaymentId} not found in ledger` };
+    }
+
+    if (eventType === 'PAYMENT_SUCCESS_WEBHOOK' || paymentData?.payment_status === 'SUCCESS' || orderData?.order_status === 'PAID') {
+      payment.status = 'success';
+      if (gatewayPaymentId) payment.gatewayPaymentId = gatewayPaymentId;
+      await payment.save();
+    } else if (eventType === 'PAYMENT_FAILED_WEBHOOK' || paymentData?.payment_status === 'FAILED') {
+      payment.status = 'failed';
+      await payment.save();
+    } else if (eventType === 'REFUND_STATUS_WEBHOOK') {
+      payment.status = 'refunded';
+      const refundData = event.data?.refund;
+      payment.refund = {
+        amount: refundData?.refund_amount || 0,
+        refundedAt: new Date(),
+        gatewayRefundId: String(refundData?.cf_refund_id || refundData?.refund_id || ''),
+        reason: refundData?.refund_note || 'Cashfree webhook refund',
+      };
+      await payment.save();
+    }
+
+    return { processed: true, eventType, orderId: gatewayOrderId, status: payment.status };
   }
 
   async getFinancialSummary(filters = {}, context = {}) {

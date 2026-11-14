@@ -244,6 +244,40 @@ export const verifyMembershipRazorpayPaymentSchema = {
   },
 };
 
+export const createMembershipCashfreeOrderSchema = {
+  description: '[Roles: All authenticated] Generate a Cashfree payment session to subscribe to a membership plan',
+  tags: ['Members Management & Subscriptions'],
+  security: [{ bearerAuth: [] }],
+  body: {
+    type: 'object',
+    required: ['planId'],
+    properties: {
+      planId: { type: 'string', minLength: 24, maxLength: 24, description: 'Membership Plan ID' },
+      userId: { type: 'string', minLength: 24, maxLength: 24, description: 'Optional target User ID (defaults to authenticated user)' },
+      orderId: { type: 'string', description: 'Optional custom order ID' },
+      returnUrl: { type: 'string', description: 'Post-payment redirect URL' },
+    },
+  },
+};
+
+export const verifyMembershipCashfreePaymentSchema = {
+  description: '[Roles: All authenticated] Verify Cashfree payment and activate membership subscription',
+  tags: ['Members Management & Subscriptions'],
+  security: [{ bearerAuth: [] }],
+  body: {
+    type: 'object',
+    required: ['planId'],
+    properties: {
+      planId: { type: 'string', minLength: 24, maxLength: 24, description: 'Membership Plan ID' },
+      userId: { type: 'string', minLength: 24, maxLength: 24, description: 'Optional target User ID' },
+      orderId: { type: 'string', description: 'Cashfree Order ID' },
+      cashfree_order_id: { type: 'string', description: 'Alias for Cashfree Order ID' },
+      cfPaymentId: { type: 'string', description: 'Cashfree Payment ID' },
+      cashfree_payment_id: { type: 'string', description: 'Alias for Cashfree Payment ID' },
+    },
+  },
+};
+
 export const assignSubscriptionTimeSlotSchema = {
   description: '[Roles: tenant_admin, branch_manager, staff] Assign or update member access time slot and sync biometric gate schedule',
   tags: ['Members Management & Subscriptions'],

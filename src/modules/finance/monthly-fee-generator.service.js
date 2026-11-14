@@ -8,6 +8,7 @@ import { MembershipPlan } from '../memberships/membershipPlan.model.js';
 import { Branch } from '../branches/branch.model.js';
 import { wabridgeService } from '../notifications/wabridge.service.js';
 import { settingsService } from '../settings/settings.service.js';
+import { cashfreeService } from './cashfree.service.js';
 import { env } from '../../config/env.js';
 import { NotFoundError, ValidationError } from '../../errors/AppError.js';
 
@@ -662,6 +663,161 @@ export class MonthlyFeeGeneratorService {
     return {
       success: true,
       message: 'Coaching fee payment verified and completed successfully',
+      invoice: feeDoc,
+      payment,
+    };
+  }
+
+  /**
+   * Initialize a Cashfree Order for a student coaching fee invoice
+   */
+  async createCashfreeOrder(feeId, context = {}) {
+    const feeDoc = await MonthlyFee.findOne({ _id: feeId, tenantId: context.tenantId })
+      .populate('studentId', 'firstName lastName phone email employeeNo')
+      .populate('batchId', 'name code schedule')
+      .populate('sportId', 'name icon');
+
+    if (!feeDoc) {
+      throw new NotFoundError('Monthly coaching fee invoice not found');
+    }
+
+    if (feeDoc.status === 'paid') {
+      throw new ValidationError('This coaching fee invoice is already paid');
+    }
+
+    if (feeDoc.finalAmount <= 0) {
+      throw new ValidationError('Invoice amount is ₹0, payment is not required');
+    }
+
+    const student = feeDoc.studentId || {};
+    const batch = feeDoc.batchId || {};
+
+    const cfOrder = await cashfreeService.createOrder({
+      amount: feeDoc.finalAmount,
+      currency: 'INR',
+      customer: {
+        id: student._id ? student._id.toString() : `stud_${Date.now()}`,
+        name: `${student.firstName || ''} ${student.lastName || ''}`.trim() || 'Student',
+        email: student.email || 'student@apexacademy.com',
+        phone: student.phone || '9999999999',
+      },
+      notes: {
+        type: 'coaching_fee',
+        feeId: feeDoc._id.toString(),
+        studentId: student._id?.toString() || '',
+        tenantId: context.tenantId?.toString() || '',
+        month: feeDoc.month,
+        year: feeDoc.year,
+        batchName: batch.name || '',
+      },
+      branchId: feeDoc.branchId,
+      tenantId: context.tenantId,
+    });
+
+    return {
+      orderId: cfOrder.orderId,
+      cfOrderId: cfOrder.cfOrderId,
+      paymentSessionId: cfOrder.paymentSessionId,
+      amount: feeDoc.finalAmount,
+      currency: 'INR',
+      gateway: 'cashfree',
+      environment: cfOrder.environment,
+      fee: {
+        id: feeDoc._id,
+        invoiceNumber: feeDoc.invoiceNumber,
+        month: feeDoc.month,
+        year: feeDoc.year,
+        baseAmount: feeDoc.baseAmount,
+        discountAmount: feeDoc.discountAmount,
+        finalAmount: feeDoc.finalAmount,
+        dueDate: feeDoc.dueDate,
+      },
+      student: {
+        id: student._id,
+        name: `${student.firstName || ''} ${student.lastName || ''}`.trim() || 'Student',
+        email: student.email || '',
+        phone: student.phone || '',
+        regNo: student.employeeNo || '',
+      },
+      batch: {
+        id: batch._id,
+        name: batch.name || 'Coaching Batch',
+        code: batch.code || '',
+        schedule: batch.schedule || '',
+      },
+    };
+  }
+
+  /**
+   * Verify Cashfree Payment and mark fee invoice as paid + log ledger payment
+   */
+  async verifyCashfreePayment(feeId, { orderId, cfPaymentId }, context = {}) {
+    const resolvedOrderId = orderId;
+    if (!resolvedOrderId && !cfPaymentId) {
+      throw new ValidationError('Cashfree Order ID (orderId) is required');
+    }
+
+    const feeDoc = await MonthlyFee.findOne({ _id: feeId, tenantId: context.tenantId })
+      .populate('studentId', 'firstName lastName phone email employeeNo')
+      .populate('batchId', 'name code schedule');
+
+    if (!feeDoc) {
+      throw new NotFoundError('Monthly coaching fee invoice not found');
+    }
+
+    if (feeDoc.status === 'paid') {
+      return {
+        alreadyPaid: true,
+        invoice: feeDoc,
+        message: 'This invoice has already been verified and marked as paid',
+      };
+    }
+
+    const cfVerification = await cashfreeService.verifyPayment({
+      orderId: resolvedOrderId || cfPaymentId,
+      cfPaymentId,
+      branchId: feeDoc.branchId,
+      tenantId: context.tenantId,
+    });
+
+    const paymentTxnId = cfVerification.paymentId || cfPaymentId || resolvedOrderId;
+
+    // Record formal ledger Payment
+    const payment = await Payment.create({
+      tenantId: feeDoc.tenantId,
+      branchId: feeDoc.branchId,
+      userId: feeDoc.studentId?._id || feeDoc.studentId,
+      amount: feeDoc.finalAmount,
+      currency: 'INR',
+      type: 'coaching',
+      referenceId: feeDoc._id.toString(),
+      paymentMethod: cfVerification.paymentMethod || 'upi',
+      gateway: 'cashfree',
+      gatewayOrderId: resolvedOrderId || '',
+      gatewayPaymentId: paymentTxnId,
+      status: 'success',
+      notes: `Student monthly coaching fee paid via Cashfree (${paymentTxnId})`,
+      metadata: {
+        feeId: feeDoc._id.toString(),
+        invoiceNumber: feeDoc.invoiceNumber,
+        month: feeDoc.month,
+        year: feeDoc.year,
+        studentId: feeDoc.studentId?._id?.toString() || feeDoc.studentId?.toString(),
+        batchId: feeDoc.batchId?._id?.toString() || feeDoc.batchId?.toString(),
+        batchName: feeDoc.batchId?.name || '',
+      },
+    });
+
+    feeDoc.status = 'paid';
+    feeDoc.paidAmount = feeDoc.finalAmount;
+    feeDoc.paidAt = new Date();
+    feeDoc.paymentId = payment._id;
+    feeDoc.notes = `Paid via Cashfree (${paymentTxnId})`;
+    await feeDoc.save();
+
+    return {
+      success: true,
+      message: 'Coaching fee payment verified and completed successfully via Cashfree',
       invoice: feeDoc,
       payment,
     };

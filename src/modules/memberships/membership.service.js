@@ -10,6 +10,7 @@ import { ROLES, PAYMENT_STATUS } from '../../config/constants.js';
 import { settingsService } from '../settings/settings.service.js';
 import { wabridgeService } from '../notifications/wabridge.service.js';
 import { razorpayService } from '../finance/razorpay.service.js';
+import { cashfreeService } from '../finance/cashfree.service.js';
 import { HikvisionService, hikvisionService } from '../iot/hikvision.service.js';
 import { Device } from '../iot/device.model.js';
 import { deviceSyncQueueService } from '../iot/device-sync-queue.service.js';
@@ -483,9 +484,14 @@ export class MembershipService extends BaseService {
 
     // 7. Record formal transaction in Ledger Payment collection
     try {
+      const isCashfree = data.paymentMethod === 'cashfree' || !!data.cashfree_order_id || !!data.cashfree_payment_id;
       const rawMethod = (data.paymentMethod || (data.razorpay_payment_id ? 'upi' : 'upi')).toLowerCase();
       const method = ['upi', 'card', 'cash', 'netbanking', 'wallet'].includes(rawMethod) ? rawMethod : 'upi';
-      const gateway = data.razorpay_payment_id || data.razorpay_order_id ? 'razorpay' : (method === 'cash' ? 'cash' : 'manual');
+      const gateway = isCashfree
+        ? 'cashfree'
+        : (data.razorpay_payment_id || data.razorpay_order_id ? 'razorpay' : (method === 'cash' ? 'cash' : 'manual'));
+      const gatewayOrderId = data.cashfree_order_id || data.razorpay_order_id || '';
+      const gatewayPaymentId = data.cashfree_payment_id || data.razorpay_payment_id || `MEM_TXN_${subscription._id}`;
 
       await razorpayService.recordPayment({
         tenantId,
@@ -497,8 +503,8 @@ export class MembershipService extends BaseService {
         referenceId: subscription._id.toString(),
         paymentMethod: method,
         gateway,
-        gatewayOrderId: data.razorpay_order_id || '',
-        gatewayPaymentId: data.razorpay_payment_id || `MEM_TXN_${subscription._id}`,
+        gatewayOrderId,
+        gatewayPaymentId,
         status: 'success',
         notes: `Membership Subscription: ${plan.name}`,
         metadata: {
@@ -1271,6 +1277,124 @@ export class MembershipService extends BaseService {
         paymentMethod: 'razorpay',
         razorpay_order_id,
         razorpay_payment_id,
+      },
+      context
+    );
+  }
+
+  /**
+   * Initialize a Cashfree Payment Order for Membership Subscription
+   */
+  async createCashfreeOrder(data, context = {}) {
+    const tenantId = context.tenantId || data.tenantId;
+    if (!tenantId) {
+      throw new ValidationError('Tenant context is required to create a payment order');
+    }
+
+    const targetUserId = data.userId || context.user?.id || context.user?.sub;
+    if (!targetUserId) {
+      throw new ValidationError('User ID is required to create a payment order');
+    }
+
+    const user = await userRepository.findById(targetUserId, tenantId);
+    if (!user) {
+      throw new NotFoundError(`User with ID '${targetUserId}' not found`);
+    }
+
+    const plan = await MembershipPlan.findById(data.planId);
+    if (!plan) {
+      throw new NotFoundError(`Membership Plan with ID '${data.planId}' not found`);
+    }
+
+    if (plan.status !== 'active') {
+      throw new ValidationError(`Membership Plan '${plan.name}' is inactive and cannot be purchased`);
+    }
+
+    const totalAmount = plan.price;
+
+    const cfOrder = await cashfreeService.createOrder({
+      orderId: data.orderId,
+      amount: totalAmount,
+      currency: 'INR',
+      customer: {
+        id: user._id.toString(),
+        name: `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'Member',
+        email: user.email || 'member@apexacademy.com',
+        phone: user.phone || '9999999999',
+      },
+      notes: {
+        type: 'membership',
+        tenantId: tenantId.toString(),
+        userId: user._id.toString(),
+        planId: plan._id.toString(),
+        planName: plan.name,
+        durationDays: plan.durationDays,
+      },
+      returnUrl: data.returnUrl || '',
+      notifyUrl: data.notifyUrl || '',
+      branchId: user.branchId || null,
+      tenantId,
+    });
+
+    return {
+      orderId: cfOrder.orderId,
+      cfOrderId: cfOrder.cfOrderId,
+      paymentSessionId: cfOrder.paymentSessionId,
+      amount: totalAmount,
+      currency: 'INR',
+      gateway: 'cashfree',
+      environment: cfOrder.environment,
+      plan: {
+        id: plan._id,
+        name: plan.name,
+        code: plan.code,
+        durationDays: plan.durationDays,
+        price: plan.price,
+        discountPercentage: plan.discountPercentage,
+      },
+      customer: {
+        userId: user._id,
+        name: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
+        email: user.email || '',
+        phone: user.phone || '',
+      },
+    };
+  }
+
+  /**
+   * Verify Cashfree Payment and finalize Membership Subscription
+   */
+  async verifyCashfreePayment(data, context = {}) {
+    const orderId = data.orderId || data.cashfree_order_id || data.order_id;
+    const cfPaymentId = data.cfPaymentId || data.cashfree_payment_id || data.cf_payment_id;
+    const { planId, userId } = data;
+
+    if (!orderId && !cfPaymentId) {
+      throw new ValidationError('Cashfree Order ID (orderId) is required');
+    }
+
+    const targetUserId = userId || context.user?.id || context.user?.sub;
+    const user = await userRepository.findById(targetUserId, context.tenantId);
+
+    // Verify Cashfree payment
+    const cfVerification = await cashfreeService.verifyPayment({
+      orderId: orderId || cfPaymentId,
+      cfPaymentId,
+      branchId: user?.branchId || null,
+      tenantId: context.tenantId,
+    });
+
+    const paymentTxnId = cfVerification.paymentId || cfPaymentId || orderId;
+
+    // Activate subscription with Cashfree payment details
+    return await this.subscribeUser(
+      {
+        planId,
+        userId: targetUserId,
+        paymentMethod: 'cashfree',
+        cashfree_order_id: orderId,
+        cashfree_payment_id: paymentTxnId,
+        transactionId: paymentTxnId,
       },
       context
     );

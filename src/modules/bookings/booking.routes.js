@@ -3,6 +3,10 @@ import {
   createBookingSchema,
   createRazorpayBookingOrderSchema,
   verifyRazorpayBookingPaymentSchema,
+  createCashfreeBookingOrderSchema,
+  verifyCashfreeBookingPaymentSchema,
+  createUnifiedBookingPaymentOrderSchema,
+  verifyUnifiedBookingPaymentSchema,
   queryBookingsSchema,
   getMyBookingsSchema,
   cancelBookingSchema,
@@ -37,6 +41,34 @@ export default async function bookingRoutes(fastify) {
     schema: verifyRazorpayBookingPaymentSchema,
     preHandler: [fastify.authenticateOptional, attachTenantContext],
     handler: bookingController.verifyRazorpayPayment.bind(bookingController),
+  });
+
+  // Cashfree Gateway Order Initialization for Court Bookings (Single or Multi-Slot)
+  fastify.post('/bookings/cashfree/order', {
+    schema: createCashfreeBookingOrderSchema,
+    preHandler: [fastify.authenticateOptional, attachTenantContext],
+    handler: bookingController.createCashfreeOrder.bind(bookingController),
+  });
+
+  // Cashfree Gateway Payment Verification & Booking Confirmation (Single or Multi-Slot)
+  fastify.post('/bookings/cashfree/verify', {
+    schema: verifyCashfreeBookingPaymentSchema,
+    preHandler: [fastify.authenticateOptional, attachTenantContext],
+    handler: bookingController.verifyCashfreePayment.bind(bookingController),
+  });
+
+  // Unified Payment Order: automatically dispatches to Cashfree or Razorpay based on tenant activeGateway
+  fastify.post('/bookings/payment/order', {
+    schema: createUnifiedBookingPaymentOrderSchema,
+    preHandler: [fastify.authenticateOptional, attachTenantContext],
+    handler: bookingController.createPaymentOrder.bind(bookingController),
+  });
+
+  // Unified Payment Verification: auto-verifies Cashfree or Razorpay payment and confirms booking
+  fastify.post('/bookings/payment/verify', {
+    schema: verifyUnifiedBookingPaymentSchema,
+    preHandler: [fastify.authenticateOptional, attachTenantContext],
+    handler: bookingController.verifyPayment.bind(bookingController),
   });
 
   fastify.get('/bookings', {

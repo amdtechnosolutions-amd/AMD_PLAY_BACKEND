@@ -40,6 +40,11 @@ export const env = {
   RAZORPAY_KEY_SECRET: process.env.RAZORPAY_KEY_SECRET || 'rzp_secret_mock',
   RAZORPAY_WEBHOOK_SECRET: process.env.RAZORPAY_WEBHOOK_SECRET || 'mock_razorpay_webhook_secret',
 
+  CASHFREE_APP_ID: process.env.CASHFREE_APP_ID || '',
+  CASHFREE_SECRET_KEY: process.env.CASHFREE_SECRET_KEY || '',
+  CASHFREE_API_VERSION: process.env.CASHFREE_API_VERSION || '2023-08-01',
+  CASHFREE_ENV: process.env.CASHFREE_ENV || 'TEST',
+
   LOG_LEVEL: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'test' ? 'silent' : 'debug'),
   isDev: (process.env.NODE_ENV || 'development') === 'development',
   isTest: process.env.NODE_ENV === 'test',

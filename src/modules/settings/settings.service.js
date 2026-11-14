@@ -27,6 +27,13 @@ export class SettingsService {
           webhookSecret: env.RAZORPAY_WEBHOOK_SECRET || '',
           accountNumber: '',
         },
+        cashfree: {
+          enabled: false,
+          appId: env.CASHFREE_APP_ID || '',
+          secretKey: env.CASHFREE_SECRET_KEY || '',
+          apiVersion: env.CASHFREE_API_VERSION || '2023-08-01',
+          environment: env.CASHFREE_ENV || 'TEST',
+        },
         stripe: {
           enabled: false,
           publishableKey: '',
@@ -121,6 +128,10 @@ export class SettingsService {
           ...defaults.paymentGateways.razorpay,
           ...(current.paymentGateways?.razorpay || {}),
         },
+        cashfree: {
+          ...defaults.paymentGateways.cashfree,
+          ...(current.paymentGateways?.cashfree || {}),
+        },
         stripe: {
           ...defaults.paymentGateways.stripe,
           ...(current.paymentGateways?.stripe || {}),
@@ -176,6 +187,14 @@ export class SettingsService {
             keySecret:
               updateData.paymentGateways.razorpay?.keySecret?.trim() ||
               existingSettings.paymentGateways.razorpay.keySecret,
+          },
+          cashfree: {
+            ...existingSettings.paymentGateways.cashfree,
+            ...(updateData.paymentGateways.cashfree || {}),
+            secretKey:
+              updateData.paymentGateways.cashfree?.secretKey?.trim() ||
+              existingSettings.paymentGateways.cashfree?.secretKey ||
+              '',
           },
           stripe: {
             ...existingSettings.paymentGateways.stripe,
@@ -288,6 +307,59 @@ export class SettingsService {
         }
       } catch (err) {
         throw new ValidationError(`Stripe connection failed: ${err.message}`);
+      }
+    } else if (targetGateway === 'cashfree') {
+      const appId = credentials.appId || settings.paymentGateways?.cashfree?.appId;
+      const secretKey = credentials.secretKey || settings.paymentGateways?.cashfree?.secretKey;
+      const apiVersion = credentials.apiVersion || settings.paymentGateways?.cashfree?.apiVersion || '2023-08-01';
+      const environment = credentials.environment || settings.paymentGateways?.cashfree?.environment || 'TEST';
+
+      if (!appId || !secretKey) {
+        throw new ValidationError('Cashfree App ID and Secret Key are required for testing');
+      }
+
+      if (appId.includes('mock') || secretKey.includes('mock')) {
+        return {
+          success: true,
+          mode: 'mock/sandbox',
+          message: 'Cashfree Sandbox / Mock credentials configured successfully',
+          appId,
+          environment,
+        };
+      }
+
+      const baseUrl = String(environment).toUpperCase() === 'PROD'
+        ? 'https://api.cashfree.com/pg'
+        : 'https://sandbox.cashfree.com/pg';
+
+      try {
+        const res = await fetch(`${baseUrl}/orders/test_auth_check_${Date.now()}`, {
+          method: 'GET',
+          headers: {
+            'x-client-id': appId,
+            'x-client-secret': secretKey,
+            'x-api-version': apiVersion,
+            'Content-Type': 'application/json',
+          },
+          signal: AbortSignal.timeout(10000),
+        });
+
+        const data = await res.json().catch(() => ({}));
+
+        if (res.status === 401 || res.status === 403) {
+          throw new Error(data.message || 'Invalid Cashfree App ID or Secret Key');
+        }
+
+        return {
+          success: true,
+          mode: String(environment).toUpperCase() === 'PROD' ? 'production' : 'sandbox/test',
+          message: `Cashfree credentials verified successfully (${String(environment).toUpperCase() === 'PROD' ? 'Production Mode' : 'Sandbox Mode'})`,
+          appId,
+          environment,
+        };
+      } catch (err) {
+        if (err instanceof ValidationError) throw err;
+        throw new ValidationError(`Cashfree connection failed: ${err.message}`);
       }
     } else {
       return {

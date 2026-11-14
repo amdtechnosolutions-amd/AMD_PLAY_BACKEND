@@ -145,6 +145,54 @@ export class BookingController {
       })
     );
   }
+
+  async createCashfreeOrder(request, reply) {
+    const context = this._extractContext(request);
+    const order = await bookingService.createCashfreeOrder(request.body, context);
+
+    return reply.status(201).send(
+      apiSuccess({
+        message: 'Cashfree booking order created successfully',
+        data: order,
+      })
+    );
+  }
+
+  async verifyCashfreePayment(request, reply) {
+    const context = this._extractContext(request);
+    const booking = await bookingService.verifyCashfreePayment(request.body, context);
+
+    return reply.status(201).send(
+      apiSuccess({
+        message: 'Booking confirmed and Cashfree payment verified successfully',
+        data: booking,
+      })
+    );
+  }
+
+  async createPaymentOrder(request, reply) {
+    const context = this._extractContext(request);
+    const order = await bookingService.createPaymentOrder(request.body, context);
+
+    return reply.status(201).send(
+      apiSuccess({
+        message: 'Booking payment order initialized successfully',
+        data: order,
+      })
+    );
+  }
+
+  async verifyPayment(request, reply) {
+    const context = this._extractContext(request);
+    const booking = await bookingService.verifyPayment(request.body, context);
+
+    return reply.status(201).send(
+      apiSuccess({
+        message: 'Booking confirmed and payment verified successfully',
+        data: booking,
+      })
+    );
+  }
   async getByGroupId(request, reply) {
     const context = this._extractContext(request);
     const bookings = await bookingService.getBookingsByGroupId(request.params.groupId, context);

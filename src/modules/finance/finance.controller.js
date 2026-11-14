@@ -130,6 +130,21 @@ export class FinanceController extends BaseController {
     );
   }
 
+  async handleCashfreeWebhook(request, reply) {
+    const signature = request.headers['x-webhook-signature'] || '';
+    const timestamp = request.headers['x-webhook-timestamp'] || '';
+    const rawBody = typeof request.body === 'string' ? request.body : JSON.stringify(request.body);
+
+    const result = await financeService.processCashfreeWebhook(request.body, signature, timestamp, rawBody);
+
+    return reply.status(200).send(
+      apiSuccess({
+        message: 'Cashfree webhook processed successfully',
+        data: result,
+      })
+    );
+  }
+
   async generateMonthlyFees(request, reply) {
     const context = this._extractContext(request);
     const body = request.body || {};
@@ -209,6 +224,34 @@ export class FinanceController extends BaseController {
     return reply.status(200).send(
       apiSuccess({
         message: result.message || 'Fee payment verified successfully',
+        data: result,
+      })
+    );
+  }
+
+  async createCashfreeFeeOrder(request, reply) {
+    const context = this._extractContext(request);
+    const order = await monthlyFeeGeneratorService.createCashfreeOrder(request.params.id, context);
+
+    return reply.status(200).send(
+      apiSuccess({
+        message: 'Cashfree order created successfully',
+        data: order,
+      })
+    );
+  }
+
+  async verifyCashfreeFeePayment(request, reply) {
+    const context = this._extractContext(request);
+    const result = await monthlyFeeGeneratorService.verifyCashfreePayment(
+      request.params.id,
+      request.body || {},
+      context
+    );
+
+    return reply.status(200).send(
+      apiSuccess({
+        message: result.message || 'Fee payment verified successfully via Cashfree',
         data: result,
       })
     );

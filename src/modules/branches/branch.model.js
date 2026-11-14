@@ -102,6 +102,13 @@ const branchSchema = new mongoose.Schema(
         keySecret: { type: String, default: '' },
         webhookSecret: { type: String, default: '' },
       },
+      cashfree: {
+        enabled: { type: Boolean, default: false },
+        appId: { type: String, default: '' },
+        secretKey: { type: String, default: '' },
+        apiVersion: { type: String, default: '2023-08-01' },
+        environment: { type: String, default: 'TEST' },
+      },
       upi: {
         enabled: { type: Boolean, default: false },
         upiId: { type: String, default: '' },

@@ -8,6 +8,8 @@ import {
   planParamSchema,
   createMembershipRazorpayOrderSchema,
   verifyMembershipRazorpayPaymentSchema,
+  createMembershipCashfreeOrderSchema,
+  verifyMembershipCashfreePaymentSchema,
   assignSubscriptionTimeSlotSchema,
 } from './membership.schema.js';
 import { requireTenantContext } from '../../middleware/tenant.middleware.js';
@@ -63,6 +65,18 @@ export default async function membershipRoutes(fastify) {
     schema: verifyMembershipRazorpayPaymentSchema,
     preHandler: [fastify.authenticate, requireTenantContext],
     handler: membershipController.verifyRazorpayPayment.bind(membershipController),
+  });
+
+  fastify.post('/memberships/cashfree/order', {
+    schema: createMembershipCashfreeOrderSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: membershipController.createCashfreeOrder.bind(membershipController),
+  });
+
+  fastify.post('/memberships/cashfree/verify', {
+    schema: verifyMembershipCashfreePaymentSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: membershipController.verifyCashfreePayment.bind(membershipController),
   });
 
   fastify.post('/memberships/subscribe', {

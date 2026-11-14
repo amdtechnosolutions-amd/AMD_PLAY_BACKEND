@@ -44,19 +44,22 @@ export default async function settingsRoutes(fastify) {
 
   fastify.post('/settings/payment-gateways/test', {
     schema: {
-      description: 'Test payment gateway connectivity (Razorpay / Stripe) for the academy',
+      description: 'Test payment gateway connectivity (Razorpay / Cashfree / Stripe) for the academy',
       tags: ['Admin Management', 'Finance & Monthly Fees'],
       security: [{ bearerAuth: [] }],
       body: {
         type: 'object',
         properties: {
-          gateway: { type: 'string', enum: ['razorpay', 'stripe', 'phonepe', 'customUpi'], default: 'razorpay' },
+          gateway: { type: 'string', enum: ['razorpay', 'cashfree', 'stripe', 'phonepe', 'customUpi'], default: 'razorpay' },
           credentials: {
             type: 'object',
             properties: {
               keyId: { type: 'string' },
               keySecret: { type: 'string' },
+              appId: { type: 'string' },
               secretKey: { type: 'string' },
+              apiVersion: { type: 'string' },
+              environment: { type: 'string', enum: ['TEST', 'PROD'] },
             },
           },
         },
