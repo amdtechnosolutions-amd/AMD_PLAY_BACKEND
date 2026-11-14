@@ -447,6 +447,17 @@ export class BookingService extends BaseService {
     }
 
     const branchIds = [...new Set(createdDocs.map((d) => d.resource?.branchId || d.doc?.branchId).filter(Boolean))];
+    const bookedSportIds = new Set(
+      createdDocs
+        .map((d) => (d.doc?.sportId || d.resource?.sportId || d.slotItem?.sportId)?.toString())
+        .filter(Boolean)
+    );
+    const bookedResourceIds = new Set(
+      createdDocs
+        .map((d) => (d.resource?._id || d.doc?.resourceId)?.toString())
+        .filter(Boolean)
+    );
+
     const entranceDevices = await Device.find({
       tenantId: resolvedTenantId,
       branchId: { $in: branchIds },
@@ -457,9 +468,31 @@ export class BookingService extends BaseService {
       ],
     });
     for (const ed of entranceDevices) {
-      if (ed.ipAddress && !allCandidateDevices.some((d) => d._id.toString() === ed._id.toString())) {
-        allCandidateDevices.push(ed);
+      if (!ed.ipAddress || allCandidateDevices.some((d) => d._id.toString() === ed._id.toString())) {
+        continue;
       }
+
+      // Check resource restrictions (e.g. device specifically bound to Turf vs Court)
+      const devResourceIds = Array.isArray(ed.resourceIds) && ed.resourceIds.length > 0
+        ? ed.resourceIds.map((r) => r.toString())
+        : (ed.resourceId ? [ed.resourceId.toString()] : []);
+
+      if (devResourceIds.length > 0) {
+        const matchesResource = devResourceIds.some((r) => bookedResourceIds.has(r));
+        if (!matchesResource) continue;
+      }
+
+      // Check sport restrictions (e.g. Badminton terminal must not get PIN for Turf / Cricket)
+      const devSportIds = Array.isArray(ed.sportIds) && ed.sportIds.length > 0
+        ? ed.sportIds.map((s) => s.toString())
+        : (ed.sportId ? [ed.sportId.toString()] : []);
+
+      if (devSportIds.length > 0) {
+        const matchesSport = devSportIds.some((s) => bookedSportIds.has(s));
+        if (!matchesSport) continue;
+      }
+
+      allCandidateDevices.push(ed);
     }
 
     // Fallback: If still no device found, grab any active biometric device in branch

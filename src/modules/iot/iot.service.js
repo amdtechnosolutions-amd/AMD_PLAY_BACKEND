@@ -374,14 +374,15 @@ export class IotService {
       targetTopics.push(device.mqttTopic);
     }
 
+    const publishOptions = { retain: true, qos: 1 };
     for (const t of targetTopics) {
       // 1. Send exact SmartElex firmware JSON payload
-      await mqttClient.publish(t, exactSmartElexPayload);
+      await mqttClient.publish(t, exactSmartElexPayload, publishOptions);
       // 2. Also send compact Format A payload: {"data":{"CH1":1}}
-      await mqttClient.publish(t, JSON.stringify({ data: { [channelKey]: isStateOn ? 1 : 0 } }));
+      await mqttClient.publish(t, JSON.stringify({ data: { [channelKey]: isStateOn ? 1 : 0 } }), publishOptions);
       // 3. Subtopics
-      await mqttClient.publish(`${t}/${channelNumber}`, isStateOn ? '1' : '0');
-      await mqttClient.publish(`${t}/${channelKey}`, isStateOn ? '1' : '0');
+      await mqttClient.publish(`${t}/${channelNumber}`, isStateOn ? '1' : '0', publishOptions);
+      await mqttClient.publish(`${t}/${channelKey}`, isStateOn ? '1' : '0', publishOptions);
     }
 
     return {
@@ -517,15 +518,16 @@ export class IotService {
       targetTopics.push(device.mqttTopic);
     }
 
+    const publishOptions = { retain: true, qos: 1 };
     for (const t of targetTopics) {
       // 1. Send ultra-compact Format A payload matching WS_MQTT.cpp directly: {"data":{"ALL":1}}
-      await mqttClient.publish(t, JSON.stringify({ data: { ALL: isStateOn ? 1 : 0 } }));
+      await mqttClient.publish(t, JSON.stringify({ data: { ALL: isStateOn ? 1 : 0 } }), publishOptions);
       // 2. Send master command full payload
-      await mqttClient.publish(t, commandPayload);
+      await mqttClient.publish(t, commandPayload, publishOptions);
       // 3. Subtopics
       for (let ch = 1; ch <= 6; ch++) {
-        await mqttClient.publish(`${t}/${ch}`, isStateOn ? '1' : '0');
-        await mqttClient.publish(`${t}/CH${ch}`, isStateOn ? '1' : '0');
+        await mqttClient.publish(`${t}/${ch}`, isStateOn ? '1' : '0', publishOptions);
+        await mqttClient.publish(`${t}/CH${ch}`, isStateOn ? '1' : '0', publishOptions);
       }
     }
 

@@ -3,6 +3,7 @@ import { Resource } from '../resources/resource.model.js';
 import { Device } from './device.model.js';
 import { iotService } from './iot.service.js';
 import { BOOKING_STATUS } from '../../config/constants.js';
+import { mqttClient } from '../../config/mqtt.js';
 
 export class IotSchedulerService {
   constructor() {
@@ -228,10 +229,12 @@ export class IotSchedulerService {
           lightChannels.add(Number(lightChannel));
         }
 
+        let anyLightStateChanged = false;
         // Actuate all light relay channels (dual lights) if state changed
         for (const ch of lightChannels) {
           const lightCh = device.relayChannels.find((c) => c.channelNumber === ch);
           if (!lightCh || lightCh.state !== targetState) {
+            anyLightStateChanged = true;
             await iotService.toggleRelayChannel(
               device._id,
               { channelNumber: ch, state: targetState },
@@ -239,6 +242,16 @@ export class IotSchedulerService {
             );
             console.log(`💡 [IoT Auto-Schedule] Court '${res.name}' Light CH${ch} set to ${targetState.toUpperCase()} (15m grace window)`);
           }
+        }
+
+        // If court is currently active, ensure retained state on hardware MQTT command topic
+        // so that any rebooted or reconnected relay controller catches up immediately
+        if (shouldBeOn && !anyLightStateChanged && device.mqttTopic) {
+          const channelData = {};
+          for (const ch of lightChannels) {
+            channelData[`CH${ch}`] = 1;
+          }
+          await mqttClient.publish(device.mqttTopic, JSON.stringify({ data: channelData }), { retain: true, qos: 1 });
         }
 
         // Actuate fan relay channel if state changed

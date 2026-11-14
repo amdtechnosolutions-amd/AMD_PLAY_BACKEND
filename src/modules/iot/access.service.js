@@ -43,7 +43,8 @@ export class AccessService {
 
     if (assignedResources.length > 0) {
       query.resourceId = { $in: assignedResources };
-    } else if (assignedSports.length > 0 && !device.isDefaultEntrance) {
+    }
+    if (assignedSports.length > 0) {
       query.sportId = { $in: assignedSports };
     }
 

@@ -17,6 +17,7 @@ const INTERNAL_IPS = new Set(['127.0.0.1', '::1', '103.99.36.60']);
 // Cache of authorized device client IDs (synced from MongoDB + defaults)
 const authorizedClientIds = new Set([
   'smartelex_relay_badminton',
+  'smartelex_relay_turf',
   'sports_academy_backend',
 ]);
 
