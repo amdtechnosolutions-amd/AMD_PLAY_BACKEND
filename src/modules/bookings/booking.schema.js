@@ -11,7 +11,7 @@ export const bookingSlotItemSchema = {
 };
 
 export const createBookingSchema = {
-  description: '[Roles: customer, member, tenant_admin, branch_manager, staff] Create a confirmed court/sports facility booking (single or multi-slot across dates), generate 6-digit access PIN, QR Code, and provision biometric access',
+  description: '[Roles: customer, member, student, coach, trainer, tenant_admin, branch_manager, staff] Create a confirmed court/sports facility booking (single or multi-slot across dates), generate 6-digit access PIN, QR Code, and provision biometric access',
   tags: ['Bookings Management'],
   security: [{ bearerAuth: [] }],
   body: {
