@@ -16,7 +16,10 @@ export class MembershipPlanRepository extends BaseRepository {
 
   async findActivePlans(tenantId) {
     return await this.model
-      .find({ tenantId, status: 'active' })
+      .find({
+        ...(tenantId ? { tenantId } : {}),
+        status: 'active',
+      })
       .populate('sportId', 'name slug type')
       .populate('courtId', 'name code surface type')
       .populate('courtIds', 'name code surface type')

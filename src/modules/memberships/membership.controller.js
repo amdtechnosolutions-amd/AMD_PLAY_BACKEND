@@ -7,6 +7,21 @@ export class MembershipController extends BaseController {
     super(membershipService);
   }
 
+  _extractContext(request) {
+    const baseContext = super._extractContext(request);
+    const tenantId =
+      baseContext.tenantId ||
+      request.headers['x-tenant-id'] ||
+      request.headers['x-tenant-slug'] ||
+      request.query?.tenantId ||
+      null;
+
+    return {
+      ...baseContext,
+      tenantId,
+    };
+  }
+
   async createPlan(request, reply) {
     const context = this._extractContext(request);
     const plan = await membershipService.createPlan(request.body, context);

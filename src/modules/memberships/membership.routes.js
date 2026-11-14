@@ -31,7 +31,7 @@ export default async function membershipRoutes(fastify) {
       tags: ['Members Management & Subscriptions'],
       security: [{ bearerAuth: [] }],
     },
-    preHandler: [fastify.authenticate, requireTenantContext],
+    preHandler: [fastify.authenticateOptional],
     handler: membershipController.listActivePlans.bind(membershipController),
   });
 
