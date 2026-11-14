@@ -53,6 +53,7 @@ export class BookingService extends BaseService {
       }
     }
 
+    let requestedUserId = data.userId || data.studentId;
     let userId = context.user?.id || context.user?.sub;
     let user = null;
 
@@ -60,6 +61,20 @@ export class BookingService extends BaseService {
       user = await userRepository.findById(userId, resolvedTenantId);
       if (!user) {
         user = await userRepository.findById(userId);
+      }
+    }
+
+    // If an authenticated user wants to book for a sibling or another user (coach/admin)
+    if (requestedUserId && user && requestedUserId.toString() !== user._id.toString()) {
+      const targetUser = (await userRepository.findById(requestedUserId, resolvedTenantId)) || (await userRepository.findById(requestedUserId));
+      if (targetUser) {
+        const isAdminOrStaff = ['tenant_admin', 'super_admin', 'manager', 'coach', 'trainer', 'staff'].includes(user.role);
+        const isSibling = user.siblingGroupId && targetUser.siblingGroupId &&
+          user.siblingGroupId.toString() === targetUser.siblingGroupId.toString();
+        if (isAdminOrStaff || isSibling) {
+          user = targetUser;
+          userId = targetUser._id;
+        }
       }
     }
 

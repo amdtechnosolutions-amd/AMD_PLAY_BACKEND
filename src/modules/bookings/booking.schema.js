@@ -27,6 +27,8 @@ export const createBookingSchema = {
         enum: ['upi', 'card', 'cash', 'wallet', 'online', 'free', 'razorpay'],
         default: 'upi',
       },
+      userId: { type: 'string', description: 'Optional target user ID (for booking on behalf of another user/sibling)' },
+      studentId: { type: 'string', description: 'Optional target student ID (for booking on behalf of a sibling)' },
       notes: { type: 'string' },
       slots: {
         type: 'array',
