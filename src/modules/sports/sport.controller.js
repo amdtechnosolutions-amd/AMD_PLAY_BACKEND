@@ -7,6 +7,21 @@ export class SportController extends BaseController {
     super(sportService);
   }
 
+  _extractContext(request) {
+    const baseContext = super._extractContext(request);
+    const tenantId =
+      baseContext.tenantId ||
+      request.headers['x-tenant-id'] ||
+      request.headers['x-tenant-slug'] ||
+      request.query?.tenantId ||
+      null;
+
+    return {
+      ...baseContext,
+      tenantId,
+    };
+  }
+
   async list(request, reply) {
     const context = this._extractContext(request);
     const { type, ..._rest } = request.query || {};

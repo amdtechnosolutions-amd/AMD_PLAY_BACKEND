@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { BaseRepository } from '../../core/BaseRepository.js';
 import { Sport } from './sport.model.js';
 
@@ -7,8 +8,15 @@ export class SportRepository extends BaseRepository {
   }
 
   async findSportsForTenant(tenantId = null, filter = {}) {
+    let tenantFilter = null;
+    if (tenantId) {
+      tenantFilter = mongoose.Types.ObjectId.isValid(tenantId)
+        ? [tenantId, new mongoose.Types.ObjectId(tenantId)]
+        : [tenantId];
+    }
+
     const query = {
-      $or: [{ tenantId: null }, ...(tenantId ? [{ tenantId }] : [])],
+      ...(tenantFilter ? { $or: [{ tenantId: null }, { tenantId: { $in: tenantFilter } }] } : {}),
       active: true,
       ...filter,
     };
@@ -16,10 +24,18 @@ export class SportRepository extends BaseRepository {
   }
 
   async findBySlug(slug, tenantId = null) {
-    return await this.model.findOne({
+    let tenantFilter = null;
+    if (tenantId) {
+      tenantFilter = mongoose.Types.ObjectId.isValid(tenantId)
+        ? [tenantId, new mongoose.Types.ObjectId(tenantId)]
+        : [tenantId];
+    }
+
+    const query = {
       slug: slug.toLowerCase(),
-      $or: [{ tenantId: null }, ...(tenantId ? [{ tenantId }] : [])],
-    }).lean();
+      ...(tenantFilter ? { $or: [{ tenantId: null }, { tenantId: { $in: tenantFilter } }] } : {}),
+    };
+    return await this.model.findOne(query).lean();
   }
 }
 
