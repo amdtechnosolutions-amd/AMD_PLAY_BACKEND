@@ -1,6 +1,6 @@
 import { enquiryController } from './enquiry.controller.js';
 import { createEnquirySchema, updateEnquirySchema } from './enquiry.schema.js';
-import { requireTenantContext } from '../../middleware/tenant.middleware.js';
+import { requireTenantContext, attachTenantContext } from '../../middleware/tenant.middleware.js';
 
 export default async function enquiryRoutes(fastify) {
   fastify.get('/enquiries', {
@@ -25,7 +25,7 @@ export default async function enquiryRoutes(fastify) {
 
   fastify.post('/enquiries', {
     schema: createEnquirySchema,
-    preHandler: [fastify.authenticateOptional, requireTenantContext],
+    preHandler: [fastify.authenticateOptional, attachTenantContext],
     handler: enquiryController.create.bind(enquiryController),
   });
 

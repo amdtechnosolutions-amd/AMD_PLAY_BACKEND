@@ -1,10 +1,11 @@
 export const createEnquirySchema = {
-  description: 'Submit or record a new lead / student enquiry',
+  description: 'Submit or record a new lead / student enquiry (Public or Authenticated)',
   tags: ['CRM Enquiries & Leads'],
   body: {
     type: 'object',
     required: ['name', 'phone'],
     properties: {
+      tenantId: { type: 'string', minLength: 24, maxLength: 24 },
       branchId: { type: 'string', minLength: 24, maxLength: 24 },
       sportId: { type: 'string', minLength: 24, maxLength: 24 },
       name: { type: 'string', minLength: 2 },
