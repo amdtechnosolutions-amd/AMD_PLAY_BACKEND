@@ -96,7 +96,7 @@ export class HikvisionService {
         method,
         headers,
         body: options.body
-          ? typeof options.body === 'string'
+          ? typeof options.body === 'string' || Buffer.isBuffer(options.body)
             ? options.body
             : JSON.stringify(options.body)
           : undefined,
@@ -623,15 +623,88 @@ export class HikvisionService {
 
   // --- Face Data Upload (FDLib) ---
   async uploadFace(employeeNo, imageBase64OrBuffer, fdId = '1') {
-    return this.request('/ISAPI/Intelligent/FDLib/FaceDataRecord?format=json', {
-      method: 'POST',
-      body: {
-        faceLibType: 'blackFD',
-        FDID: String(fdId),
-        FPID: String(employeeNo),
-        name: String(employeeNo),
-      },
+    let imgBuffer;
+    if (Buffer.isBuffer(imageBase64OrBuffer)) {
+      imgBuffer = imageBase64OrBuffer;
+    } else if (typeof imageBase64OrBuffer === 'string') {
+      const cleanBase64 = imageBase64OrBuffer.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, '').trim();
+      imgBuffer = Buffer.from(cleanBase64, 'base64');
+    } else {
+      throw new Error('Image data must be a Buffer or Base64 string');
+    }
+
+    const cleanEmpNo = String(employeeNo).trim();
+    const boundary = '----HikvisionFDLibBoundary' + Date.now();
+    const jsonPart = JSON.stringify({
+      faceLibType: 'blackFD',
+      FDID: String(fdId),
+      FPID: cleanEmpNo,
     });
+
+    const fullBody = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="FaceDataRecord"\r\nContent-Type: application/json\r\n\r\n${jsonPart}\r\n`),
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="img"; filename="${cleanEmpNo}.jpg"\r\nContent-Type: image/jpeg\r\n\r\n`),
+      imgBuffer,
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ]);
+
+    try {
+      return await this.request('/ISAPI/Intelligent/FDLib/FaceDataRecord?format=json', {
+        method: 'POST',
+        headers: {
+          'Content-Type': `multipart/form-data; boundary=${boundary}`,
+          'Content-Length': String(fullBody.length),
+        },
+        body: fullBody,
+      });
+    } catch (err) {
+      // If user already has a face in FDLib on device, update it via FDSetUp (PUT)
+      const isAlreadyExist =
+        err.data?.subStatusCode === 'deviceUserAlreadyExistFace' ||
+        err.message?.includes('deviceUserAlreadyExistFace') ||
+        err.message?.includes('AlreadyExist');
+
+      if (isAlreadyExist) {
+        console.log(`[HikvisionService] Face already exists for ${cleanEmpNo}, updating via FDSetUp PUT...`);
+        return await this.request('/ISAPI/Intelligent/FDLib/FDSetUp?format=json', {
+          method: 'PUT',
+          headers: {
+            'Content-Type': `multipart/form-data; boundary=${boundary}`,
+            'Content-Length': String(fullBody.length),
+          },
+          body: fullBody,
+        });
+      }
+
+      // If user does not exist on device yet, auto-register person on terminal then retry face upload
+      const isUserNotExist =
+        err.data?.subStatusCode === 'employeeNoNotExist' ||
+        err.message?.includes('employeeNoNotExist');
+
+      if (isUserNotExist) {
+        console.log(`[HikvisionService] User ${cleanEmpNo} not yet on device, creating user and retrying face upload...`);
+        try {
+          await this.recordPerson({
+            employeeNo: cleanEmpNo,
+            name: cleanEmpNo,
+            userType: 'normal',
+            planTemplateNo: 1,
+          });
+          return await this.request('/ISAPI/Intelligent/FDLib/FaceDataRecord?format=json', {
+            method: 'POST',
+            headers: {
+              'Content-Type': `multipart/form-data; boundary=${boundary}`,
+              'Content-Length': String(fullBody.length),
+            },
+            body: fullBody,
+          });
+        } catch (retryErr) {
+          throw retryErr;
+        }
+      }
+
+      throw err;
+    }
   }
 
   // --- Search Users on Device ---

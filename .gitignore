@@ -26,6 +26,9 @@ pids
 coverage/
 .nyc_output/
 
+# User Uploads
+uploads/
+
 # OS and Editor metadata
 .DS_Store
 Thumbs.db

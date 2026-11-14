@@ -46,4 +46,28 @@ export default async function memberRoutes(fastify) {
     preHandler: [fastify.authenticate, requireTenantContext],
     handler: memberController.getMemberSubscriptions.bind(memberController),
   });
+
+  fastify.post('/members/:id/face', {
+    schema: {
+      description: '[Roles: tenant_admin, branch_manager, staff, member] Upload member face photo (Base64) and sync directly to biometric access terminal',
+      tags: ['Members Management'],
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object',
+        required: ['id'],
+        properties: {
+          id: { type: 'string', minLength: 24, maxLength: 24, description: 'Member User ID' },
+        },
+      },
+      body: {
+        type: 'object',
+        required: ['faceImageBase64'],
+        properties: {
+          faceImageBase64: { type: 'string', description: 'Base64 encoded JPEG/PNG facial image' },
+        },
+      },
+    },
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: memberController.uploadFace.bind(memberController),
+  });
 }

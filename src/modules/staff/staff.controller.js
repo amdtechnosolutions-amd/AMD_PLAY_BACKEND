@@ -97,6 +97,18 @@ export class StaffController {
     );
   }
 
+  async uploadFace(req, reply) {
+    const context = this._extractContext(req);
+    const { faceUploadService } = await import('../users/face-upload.service.js');
+    const result = await faceUploadService.uploadAndSyncFace(req.params.id, req.body, context);
+    return reply.status(200).send(
+      apiSuccess({
+        message: 'Staff/Coach face photo uploaded and synced to biometric terminals successfully',
+        data: result,
+      })
+    );
+  }
+
   // =========================================================================
   // DYNAMIC DEPARTMENTS CRUD
   // =========================================================================

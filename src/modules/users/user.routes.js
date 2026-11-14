@@ -77,4 +77,101 @@ export default async function userRoutes(fastify) {
       });
     },
   });
+
+  // Self face photo upload for currently authenticated user (Student / Member / Coach)
+  fastify.post('/users/me/face', {
+    schema: {
+      tags: ['Users & Profile'],
+      description: '[All Authenticated Users] Upload personal face photo (Base64) and sync directly to academy biometric access terminals',
+      security: [{ bearerAuth: [] }],
+      body: {
+        type: 'object',
+        required: ['faceImageBase64'],
+        properties: {
+          faceImageBase64: { type: 'string', description: 'Base64 encoded JPEG/PNG facial image' },
+        },
+      },
+    },
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: async (request, reply) => {
+      const { faceUploadService } = await import('./face-upload.service.js');
+      const userId = request.user?.id || request.user?.sub;
+      const result = await faceUploadService.uploadAndSyncFace(userId, request.body, {
+        tenantId: request.tenantId || request.user?.tenantId,
+        user: request.user,
+      });
+      return reply.status(200).send({
+        success: true,
+        message: 'Personal face photo uploaded and synced to biometric terminals successfully',
+        data: result,
+      });
+    },
+  });
+
+  // Face photo upload by User ID
+  fastify.post('/users/:id/face', {
+    schema: {
+      tags: ['Users & Profile'],
+      description: '[Roles: tenant_admin, branch_manager, staff, coach] Upload user face photo (Base64) and sync directly to biometric access terminals',
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object',
+        required: ['id'],
+        properties: {
+          id: { type: 'string', minLength: 24, maxLength: 24, description: 'User ID' },
+        },
+      },
+      body: {
+        type: 'object',
+        required: ['faceImageBase64'],
+        properties: {
+          faceImageBase64: { type: 'string', description: 'Base64 encoded JPEG/PNG facial image' },
+        },
+      },
+    },
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: async (request, reply) => {
+      const { faceUploadService } = await import('./face-upload.service.js');
+      const result = await faceUploadService.uploadAndSyncFace(request.params.id, request.body, {
+        tenantId: request.tenantId || request.user?.tenantId,
+        user: request.user,
+      });
+      return reply.status(200).send({
+        success: true,
+        message: 'User face photo uploaded and synced to biometric terminals successfully',
+        data: result,
+      });
+    },
+  });
+
+  // Direct streaming of uploaded avatars
+  fastify.get('/uploads/avatars/:filename', {
+    schema: {
+      tags: ['Users & Profile'],
+      description: 'Stream uploaded user avatar/face image file directly from disk',
+      params: {
+        type: 'object',
+        required: ['filename'],
+        properties: {
+          filename: { type: 'string' },
+        },
+      },
+    },
+    handler: async (request, reply) => {
+      const fs = await import('node:fs');
+      const path = await import('node:path');
+      const filename = path.basename(request.params.filename);
+      const filePath = path.join(process.cwd(), 'uploads', 'avatars', filename);
+      if (!fs.existsSync(filePath)) {
+        return reply.code(404).send({ success: false, message: 'Avatar image not found' });
+      }
+      const ext = path.extname(filename).toLowerCase();
+      const contentType = ext === '.png' ? 'image/png' : 'image/jpeg';
+      const stream = fs.createReadStream(filePath);
+      return reply
+        .header('Content-Type', contentType)
+        .header('Cache-Control', 'public, max-age=604800, must-revalidate')
+        .send(stream);
+    },
+  });
 }

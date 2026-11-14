@@ -1138,43 +1138,9 @@ export class CoachingService extends BaseService {
   /**
    * Upload and sync student face photo to biometric ISAPI face library
    */
-  async uploadStudentFace(studentId, { faceImageBase64 }, context = {}) {
-    const tenantId = context.tenantId;
-    if (!tenantId) {
-      throw new ValidationError('Tenant context is required');
-    }
-
-    if (!faceImageBase64) {
-      throw new ValidationError('Face image base64 data is required');
-    }
-
-    const student = await userRepository.findById(studentId, tenantId);
-    if (!student) {
-      throw new NotFoundError(`Student with ID '${studentId}' not found`);
-    }
-
-    // Save image reference in user metadata
-    student.metadata = student.metadata || {};
-    student.metadata.facePhotoUrl = faceImageBase64.slice(0, 50) + '...';
-    await student.save();
-
-    const empNo = student.employeeNo || student.phone || student._id.toString().slice(-6);
-
-    // Upload to primary Hikvision ISAPI client
-    let syncResult = null;
-    try {
-      syncResult = await hikvisionService.uploadFace(empNo, faceImageBase64);
-    } catch (err) {
-      console.warn('[Face Sync] Direct upload warning, enqueuing to offline retry queue:', err.message);
-    }
-
-    return {
-      success: true,
-      studentId,
-      employeeNo: empNo,
-      status: 'FACE_REGISTERED',
-      syncResult,
-    };
+  async uploadStudentFace(studentId, body, context = {}) {
+    const { faceUploadService } = await import('../users/face-upload.service.js');
+    return await faceUploadService.uploadAndSyncFace(studentId, body, context);
   }
 
   async update(id, data, context = {}) {

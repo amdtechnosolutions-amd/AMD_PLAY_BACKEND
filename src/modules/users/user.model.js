@@ -75,6 +75,11 @@ const userSchema = new mongoose.Schema(
       trim: true,
       default: '',
     },
+    avatar: {
+      type: String,
+      trim: true,
+      default: '',
+    },
     siblingGroupId: {
       type: mongoose.Schema.Types.ObjectId,
       index: true,
