@@ -51,6 +51,23 @@ export class CashfreeService {
       } catch (_) {}
     }
 
+    if (!appId || !secretKey || appId.includes('mock') || secretKey.includes('mock')) {
+      try {
+        const { tenantRepository } = await import('../tenants/tenant.repository.js');
+        const activeTenant = await tenantRepository.model.findOne({ status: 'active' }).lean();
+        if (activeTenant) {
+          const tenantSettings = await settingsService.getSettings(activeTenant._id);
+          const tenantCf = tenantSettings?.paymentGateways?.cashfree || tenantSettings?.paymentSettings?.cashfree;
+          if (tenantCf?.appId) {
+            appId = tenantCf.appId.trim();
+            secretKey = (tenantCf.secretKey || secretKey).trim();
+            apiVersion = (tenantCf.apiVersion || apiVersion).trim();
+            environment = (tenantCf.environment || environment).trim();
+          }
+        }
+      } catch (_) {}
+    }
+
     const isProd = ['PROD', 'PRODUCTION', 'LIVE'].includes(String(environment).toUpperCase()) ||
       secretKey.startsWith('cfsk_ma_prod_');
     const baseUrl = isProd
@@ -285,6 +302,8 @@ export class CashfreeService {
           orderId,
           cfOrderId: String(orderData.cf_order_id || orderId),
           paymentId: resolvedPaymentId,
+          cfPaymentId: resolvedPaymentId,
+          bankReference: successfulPayment?.bank_reference || '',
           paymentMethod,
           paymentStatus: 'SUCCESS',
           amount: orderData.order_amount,
@@ -402,11 +421,19 @@ export class CashfreeService {
       return null;
     }
 
-    if (gatewayPaymentId) {
-      const existing = await Payment.findOne({ gatewayPaymentId });
+    if (gatewayPaymentId || gatewayOrderId) {
+      const orClauses = [];
+      if (gatewayPaymentId) orClauses.push({ gatewayPaymentId });
+      if (gatewayOrderId) orClauses.push({ gatewayOrderId });
+      const existing = await Payment.findOne({ $or: orClauses });
       if (existing) {
         existing.status = status;
         if (amount) existing.amount = amount;
+        if (gatewayPaymentId) existing.gatewayPaymentId = gatewayPaymentId;
+        if (notes) existing.notes = notes;
+        if (metadata && Object.keys(metadata).length) {
+          existing.metadata = { ...(existing.metadata || {}), ...metadata };
+        }
         await existing.save();
         return existing;
       }
