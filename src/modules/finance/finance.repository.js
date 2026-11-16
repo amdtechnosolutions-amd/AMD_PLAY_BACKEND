@@ -1,6 +1,7 @@
 import { BaseRepository } from '../../core/BaseRepository.js';
 import { Expense } from './expense.model.js';
 import { Payment } from './payment.model.js';
+import { WebhookLog } from './webhook-log.model.js';
 
 export class ExpenseRepository extends BaseRepository {
   constructor() {
@@ -99,5 +100,31 @@ export class PaymentRepository extends BaseRepository {
   }
 }
 
+export class WebhookLogRepository extends BaseRepository {
+  constructor() {
+    super(WebhookLog);
+  }
+
+  async paginateWebhookLogs(filter = {}, pagination = {}, tenantId = null) {
+    const sort = pagination.sort || { receivedAt: -1 };
+    return await this.paginate(
+      filter,
+      {
+        ...pagination,
+        sort,
+        populate: [
+          { path: 'tenantId', select: 'name subdomain' },
+          { path: 'branchId', select: 'name code' },
+          { path: 'paymentId', select: 'amount currency status type referenceId' },
+          { path: 'bookingId', select: 'bookingNumber status payment' },
+        ],
+        lean: true,
+      },
+      tenantId
+    );
+  }
+}
+
 export const expenseRepository = new ExpenseRepository();
 export const paymentRepository = new PaymentRepository();
+export const webhookLogRepository = new WebhookLogRepository();

@@ -169,3 +169,53 @@ export const paymentParamSchema = {
     },
   },
 };
+
+export const queryWebhookLogsSchema = {
+  description: 'List payment gateway webhook logs and report for admin panel with filtering, search, and summary metrics',
+  tags: ['Finance & Monthly Fees'],
+  security: [{ bearerAuth: [] }],
+  querystring: {
+    type: 'object',
+    properties: {
+      gateway: { type: 'string', enum: ['cashfree', 'razorpay', 'stripe', 'manual', 'other'] },
+      status: { type: 'string', enum: ['success', 'failed', 'refunded', 'dropped', 'test', 'received', 'error'] },
+      eventType: { type: 'string' },
+      branchId: { type: 'string' },
+      tenantId: { type: 'string' },
+      search: { type: 'string' },
+      startDate: { type: 'string' },
+      endDate: { type: 'string' },
+      page: { type: 'integer', minimum: 1 },
+      limit: { type: 'integer', minimum: 1, maximum: 100 },
+    },
+  },
+};
+
+export const webhookSummarySchema = {
+  description: 'Aggregate webhook metrics summary by gateway and status',
+  tags: ['Finance & Monthly Fees'],
+  security: [{ bearerAuth: [] }],
+  querystring: {
+    type: 'object',
+    properties: {
+      gateway: { type: 'string' },
+      branchId: { type: 'string' },
+      tenantId: { type: 'string' },
+      startDate: { type: 'string' },
+      endDate: { type: 'string' },
+    },
+  },
+};
+
+export const webhookParamSchema = {
+  description: 'Webhook Log ID parameter',
+  tags: ['Finance & Monthly Fees'],
+  security: [{ bearerAuth: [] }],
+  params: {
+    type: 'object',
+    required: ['id'],
+    properties: {
+      id: { type: 'string', minLength: 24, maxLength: 24 },
+    },
+  },
+};

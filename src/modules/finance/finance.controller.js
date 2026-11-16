@@ -270,6 +270,51 @@ export class FinanceController extends BaseController {
       })
     );
   }
+
+  async listWebhookLogs(request, reply) {
+    const context = this._extractContext(request);
+    const { page, limit, ...filters } = request.query || {};
+    const pagination = { page, limit };
+
+    const result = await financeService.getWebhookReport(filters, pagination, context);
+
+    return reply.status(200).send(
+      apiSuccess({
+        message: 'Webhook report retrieved successfully',
+        data: result.items,
+        meta: {
+          summary: result.summary,
+        },
+        pagination: result.pagination,
+      })
+    );
+  }
+
+  async getWebhookSummary(request, reply) {
+    const context = this._extractContext(request);
+    const filters = request.query || {};
+
+    const summary = await financeService.getWebhookSummary(filters, context);
+
+    return reply.status(200).send(
+      apiSuccess({
+        message: 'Webhook summary metrics retrieved successfully',
+        data: summary,
+      })
+    );
+  }
+
+  async getWebhookLogById(request, reply) {
+    const context = this._extractContext(request);
+    const log = await financeService.getWebhookById(request.params.id, context);
+
+    return reply.status(200).send(
+      apiSuccess({
+        message: 'Webhook log details retrieved successfully',
+        data: log,
+      })
+    );
+  }
 }
 
 export const financeController = new FinanceController();

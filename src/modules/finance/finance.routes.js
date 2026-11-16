@@ -8,6 +8,9 @@ import {
   financialSummarySchema,
   expenseParamSchema,
   paymentParamSchema,
+  queryWebhookLogsSchema,
+  webhookSummarySchema,
+  webhookParamSchema,
 } from './finance.schema.js';
 import { requireTenantContext } from '../../middleware/tenant.middleware.js';
 
@@ -95,6 +98,31 @@ export default async function financeRoutes(fastify) {
       tags: ['Finance & Monthly Fees'],
     },
     handler: financeController.handleCashfreeWebhook.bind(financeController),
+  });
+
+  // Webhook Logs & Reports (for Admin Panel)
+  fastify.get('/finance/webhooks', {
+    schema: queryWebhookLogsSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: financeController.listWebhookLogs.bind(financeController),
+  });
+
+  fastify.get('/finance/webhook/logs', {
+    schema: queryWebhookLogsSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: financeController.listWebhookLogs.bind(financeController),
+  });
+
+  fastify.get('/finance/webhooks/summary', {
+    schema: webhookSummarySchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: financeController.getWebhookSummary.bind(financeController),
+  });
+
+  fastify.get('/finance/webhooks/:id', {
+    schema: webhookParamSchema,
+    preHandler: [fastify.authenticate, requireTenantContext],
+    handler: financeController.getWebhookLogById.bind(financeController),
   });
 
   // Monthly Coaching & Member Fee Billing

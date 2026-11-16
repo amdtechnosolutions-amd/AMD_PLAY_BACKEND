@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
-import { expenseRepository, paymentRepository } from './finance.repository.js';
+import mongoose from 'mongoose';
+import { expenseRepository, paymentRepository, webhookLogRepository } from './finance.repository.js';
 import { MonthlyFee } from './monthly-fee.model.js';
 import { bookingRepository } from '../bookings/booking.repository.js';
 import { cashfreeService } from './cashfree.service.js';
@@ -10,6 +11,7 @@ export class FinanceService {
   constructor() {
     this.expenseRepository = expenseRepository;
     this.paymentRepository = paymentRepository;
+    this.webhookLogRepository = webhookLogRepository;
   }
 
   async recordExpense(data, context) {
@@ -149,6 +151,18 @@ export class FinanceService {
   async processWebhook(event, signature, rawBody, secret = env.RAZORPAY_WEBHOOK_SECRET) {
     const isValid = this.verifyWebhookSignature(rawBody, signature, secret);
     if (!isValid) {
+      try {
+        await this.webhookLogRepository.create({
+          gateway: 'razorpay',
+          eventType: event?.event || 'UNKNOWN',
+          status: 'error',
+          signatureValid: false,
+          error: 'Invalid Razorpay webhook signature',
+          payload: event,
+          headers: { 'x-razorpay-signature': signature },
+          receivedAt: new Date(),
+        });
+      } catch (_) {}
       throw new ValidationError('Invalid webhook signature');
     }
 
@@ -159,30 +173,63 @@ export class FinanceService {
     }
 
     const gatewayPaymentId = paymentEntity.id;
+    const gatewayOrderId = paymentEntity.order_id || '';
     const payment = await this.paymentRepository.findByGatewayPaymentId(gatewayPaymentId);
 
-    if (!payment) {
-      return { processed: false, message: `Payment with gateway id ${gatewayPaymentId} not found` };
+    const isSuccess = eventName === 'payment.captured' || eventName === 'order.paid';
+    const isFailure = eventName === 'payment.failed';
+    const isRefund = eventName === 'refund.processed';
+
+    if (payment) {
+      if (isSuccess) {
+        payment.status = 'success';
+        await payment.save();
+      } else if (isFailure) {
+        payment.status = 'failed';
+        await payment.save();
+      } else if (isRefund) {
+        payment.status = 'refunded';
+        payment.refund = {
+          amount: (payload.refund?.entity?.amount || 0) / 100,
+          refundedAt: new Date(),
+          gatewayRefundId: payload.refund?.entity?.id || '',
+          reason: payload.refund?.entity?.notes?.reason || 'Webhook refund',
+        };
+        await payment.save();
+      }
     }
 
-    if (eventName === 'payment.captured' || eventName === 'order.paid') {
-      payment.status = 'success';
-      await payment.save();
-    } else if (eventName === 'payment.failed') {
-      payment.status = 'failed';
-      await payment.save();
-    } else if (eventName === 'refund.processed') {
-      payment.status = 'refunded';
-      payment.refund = {
-        amount: (payload.refund?.entity?.amount || 0) / 100,
-        refundedAt: new Date(),
-        gatewayRefundId: payload.refund?.entity?.id || '',
-        reason: payload.refund?.entity?.notes?.reason || 'Webhook refund',
-      };
-      await payment.save();
+    const webhookStatus = isSuccess ? 'success' : isFailure ? 'failed' : isRefund ? 'refunded' : 'received';
+
+    // Record Webhook Log
+    try {
+      await this.webhookLogRepository.create({
+        tenantId: payment?.tenantId || null,
+        branchId: payment?.branchId || null,
+        gateway: 'razorpay',
+        eventType: eventName,
+        gatewayOrderId,
+        gatewayPaymentId,
+        amount: (paymentEntity.amount || 0) / 100,
+        currency: paymentEntity.currency || 'INR',
+        paymentMethod: paymentEntity.method || '',
+        status: webhookStatus,
+        signatureValid: true,
+        customer: {
+          name: paymentEntity.notes?.customerName || '',
+          email: paymentEntity.email || '',
+          phone: paymentEntity.contact || '',
+        },
+        paymentId: payment?._id || null,
+        payload: event,
+        headers: { 'x-razorpay-signature': signature },
+        receivedAt: new Date(),
+      });
+    } catch (logErr) {
+      console.error('[Razorpay WebhookLog Error]:', logErr.message);
     }
 
-    return { processed: true, event: eventName, paymentId: payment._id, status: payment.status };
+    return { processed: true, event: eventName, paymentId: payment?._id, status: webhookStatus };
   }
 
   async processCashfreeWebhook(event, signature, timestamp, rawBody) {
@@ -193,17 +240,59 @@ export class FinanceService {
     });
 
     if (!isValid && !env.isDev && !env.isTest) {
+      try {
+        await this.webhookLogRepository.create({
+          gateway: 'cashfree',
+          eventType: event?.type || event?.event || 'UNKNOWN',
+          status: 'error',
+          signatureValid: false,
+          error: 'Invalid Cashfree webhook signature',
+          payload: event,
+          headers: {
+            'x-webhook-signature': signature,
+            'x-webhook-timestamp': timestamp,
+          },
+          receivedAt: new Date(),
+        });
+      } catch (_) {}
       throw new ValidationError('Invalid Cashfree webhook signature');
     }
 
     const eventType = event.type || event.event || '';
+
+    // Handle dashboard test ping events
     if (eventType === 'TEST_WEBHOOK' || eventType.toUpperCase().includes('TEST')) {
+      let testTenantId = null;
+      try {
+        const { tenantRepository } = await import('../tenants/tenant.repository.js');
+        const defaultTenant = await tenantRepository.model.findOne({ status: 'active' }).select('_id').lean();
+        if (defaultTenant) testTenantId = defaultTenant._id;
+      } catch (_) {}
+
+      try {
+        await this.webhookLogRepository.create({
+          tenantId: testTenantId,
+          gateway: 'cashfree',
+          eventType: 'TEST_WEBHOOK',
+          status: 'test',
+          signatureValid: true,
+          payload: event,
+          headers: {
+            'x-webhook-signature': signature,
+            'x-webhook-timestamp': timestamp,
+          },
+          receivedAt: new Date(),
+        });
+      } catch (logErr) {
+        console.error('[Cashfree Test WebhookLog Error]:', logErr.message);
+      }
       return { processed: true, message: 'Cashfree test webhook verified successfully' };
     }
 
     const linkData = event.data?.link_id ? event.data : null;
     const paymentData = event.data?.payment;
     const orderData = event.data?.order;
+    const customerDetails = event.data?.customer_details || orderData?.customer_details || linkData?.customer_details || {};
 
     const gatewayPaymentId = paymentData?.cf_payment_id
       ? String(paymentData.cf_payment_id)
@@ -230,6 +319,7 @@ export class FinanceService {
       orderData?.transaction_status === 'FAILED';
 
     const isRefund = eventType === 'REFUND_STATUS_WEBHOOK';
+    const isDropped = eventType === 'PAYMENT_USER_DROPPED_WEBHOOK';
 
     // 1. Update Payment ledger if exists
     let payment = null;
@@ -267,6 +357,7 @@ export class FinanceService {
     }
 
     // 2. Update Court Booking if exists (for mobile app & web async confirmation)
+    let bookingDoc = null;
     try {
       const bookings = await bookingRepository.model.find({
         $or: [
@@ -278,6 +369,10 @@ export class FinanceService {
           { bookingNumber: gatewayOrderId },
         ],
       });
+
+      if (bookings.length > 0) {
+        bookingDoc = bookings[0];
+      }
 
       for (const b of bookings) {
         if (isSuccess) {
@@ -294,6 +389,7 @@ export class FinanceService {
     } catch (_) {}
 
     // 3. Update Monthly Coaching / Member Fee invoice if exists
+    let feeDoc = null;
     try {
       const fee = await MonthlyFee.findOne({
         $or: [
@@ -304,6 +400,7 @@ export class FinanceService {
         ],
       });
       if (fee) {
+        feeDoc = fee;
         if (isSuccess) {
           fee.status = 'paid';
           fee.paidAt = new Date();
@@ -315,13 +412,227 @@ export class FinanceService {
       }
     } catch (_) {}
 
+    // 4. Resolve tenantId & branchId
+    let resolvedTenantId = payment?.tenantId || bookingDoc?.tenantId || feeDoc?.tenantId || null;
+    let resolvedBranchId = payment?.branchId || bookingDoc?.branchId || feeDoc?.branchId || null;
+
+    if (!resolvedTenantId && orderData?.order_tags?.tenantId) {
+      resolvedTenantId = orderData.order_tags.tenantId;
+    }
+
+    if (!resolvedTenantId) {
+      try {
+        const { tenantRepository } = await import('../tenants/tenant.repository.js');
+        const defaultTenant = await tenantRepository.model.findOne({ status: 'active' }).select('_id').lean();
+        if (defaultTenant) resolvedTenantId = defaultTenant._id;
+      } catch (_) {}
+    }
+
+    const resolvedAmount = orderData?.order_amount || paymentData?.payment_amount || linkData?.link_amount || payment?.amount || 0;
+    const resolvedCurrency = orderData?.order_currency || paymentData?.payment_currency || linkData?.link_currency || 'INR';
+    const resolvedMethod = paymentData?.payment_group || (paymentData?.payment_method?.upi ? 'upi' : '') || payment?.paymentMethod || '';
+    const webhookStatus = isSuccess ? 'success' : isDropped ? 'dropped' : isFailure ? 'failed' : isRefund ? 'refunded' : 'received';
+
+    // 5. Persist WebhookLog
+    try {
+      await this.webhookLogRepository.create({
+        tenantId: resolvedTenantId,
+        branchId: resolvedBranchId,
+        gateway: 'cashfree',
+        eventType,
+        gatewayOrderId,
+        gatewayPaymentId,
+        amount: Number(resolvedAmount) || 0,
+        currency: String(resolvedCurrency || 'INR').toUpperCase(),
+        paymentMethod: resolvedMethod,
+        status: webhookStatus,
+        signatureValid: true,
+        customer: {
+          name: customerDetails.customer_name || customerDetails.name || '',
+          email: customerDetails.customer_email || customerDetails.email || '',
+          phone: customerDetails.customer_phone || customerDetails.phone || '',
+        },
+        paymentId: payment?._id || null,
+        bookingId: bookingDoc?._id || null,
+        payload: event,
+        headers: {
+          'x-webhook-signature': signature,
+          'x-webhook-timestamp': timestamp,
+        },
+        receivedAt: new Date(),
+      });
+    } catch (logErr) {
+      console.error('[Cashfree WebhookLog Error]:', logErr.message);
+    }
+
     return {
       processed: true,
       eventType,
       orderId: gatewayOrderId,
       paymentId: gatewayPaymentId,
-      status: isSuccess ? 'success' : isFailure ? 'failed' : isRefund ? 'refunded' : 'received',
+      status: webhookStatus,
     };
+  }
+
+  async getWebhookReport(filters = {}, pagination = {}, context = {}) {
+    const rawTenantId = context.tenantId || (filters.tenantId && filters.tenantId !== 'all' ? filters.tenantId : null);
+    const query = {};
+
+    if (rawTenantId && mongoose.Types.ObjectId.isValid(rawTenantId)) {
+      query.tenantId = new mongoose.Types.ObjectId(String(rawTenantId));
+    }
+
+    if (filters.gateway) {
+      query.gateway = String(filters.gateway).toLowerCase();
+    }
+
+    if (filters.status) {
+      query.status = String(filters.status).toLowerCase();
+    }
+
+    if (filters.eventType) {
+      query.eventType = String(filters.eventType);
+    }
+
+    if (filters.branchId && mongoose.Types.ObjectId.isValid(filters.branchId)) {
+      query.branchId = new mongoose.Types.ObjectId(String(filters.branchId));
+    }
+
+    if (filters.search && String(filters.search).trim()) {
+      const term = String(filters.search).trim();
+      const escaped = term.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
+      const regex = new RegExp(escaped, 'i');
+      query.$or = [
+        { gatewayOrderId: regex },
+        { gatewayPaymentId: regex },
+        { 'customer.name': regex },
+        { 'customer.email': regex },
+        { 'customer.phone': regex },
+      ];
+    }
+
+    if (filters.startDate || filters.endDate) {
+      query.receivedAt = {};
+      if (filters.startDate) {
+        query.receivedAt.$gte = new Date(filters.startDate.includes('T') ? filters.startDate : `${filters.startDate}T00:00:00.000Z`);
+      }
+      if (filters.endDate) {
+        query.receivedAt.$lte = new Date(filters.endDate.includes('T') ? filters.endDate : `${filters.endDate}T23:59:59.999Z`);
+      }
+    }
+
+    const page = Math.max(1, Number.parseInt(pagination.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, Number.parseInt(pagination.limit, 10) || 20));
+    const skip = (page - 1) * limit;
+
+    const [items, total, summaryAgg] = await Promise.all([
+      this.webhookLogRepository.model
+        .find(query)
+        .sort({ receivedAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate('tenantId', 'name subdomain')
+        .populate('branchId', 'name code')
+        .populate('paymentId', 'amount currency status type referenceId')
+        .populate('bookingId', 'bookingNumber status payment')
+        .lean()
+        .exec(),
+      this.webhookLogRepository.model.countDocuments(query),
+      this.webhookLogRepository.model.aggregate([
+        { $match: query },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: 1 },
+            totalAmount: {
+              $sum: {
+                $cond: [{ $eq: ['$status', 'success'] }, '$amount', 0],
+              },
+            },
+            successCount: {
+              $sum: { $cond: [{ $eq: ['$status', 'success'] }, 1, 0] },
+            },
+            failedCount: {
+              $sum: { $cond: [{ $in: ['$status', ['failed', 'dropped']] }, 1, 0] },
+            },
+            testCount: {
+              $sum: { $cond: [{ $eq: ['$status', 'test'] }, 1, 0] },
+            },
+            refundedCount: {
+              $sum: { $cond: [{ $eq: ['$status', 'refunded'] }, 1, 0] },
+            },
+            cashfreeCount: {
+              $sum: { $cond: [{ $eq: ['$gateway', 'cashfree'] }, 1, 0] },
+            },
+            razorpayCount: {
+              $sum: { $cond: [{ $eq: ['$gateway', 'razorpay'] }, 1, 0] },
+            },
+          },
+        },
+      ]),
+    ]);
+
+    const stats = summaryAgg[0] || {
+      total: 0,
+      totalAmount: 0,
+      successCount: 0,
+      failedCount: 0,
+      testCount: 0,
+      refundedCount: 0,
+      cashfreeCount: 0,
+      razorpayCount: 0,
+    };
+
+    return {
+      items,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit) || 1,
+        hasNext: page * limit < total,
+        hasPrev: page > 1,
+      },
+      summary: {
+        total: stats.total || 0,
+        totalAmount: Number((stats.totalAmount || 0).toFixed(2)),
+        successCount: stats.successCount || 0,
+        failedCount: stats.failedCount || 0,
+        testCount: stats.testCount || 0,
+        refundedCount: stats.refundedCount || 0,
+        byGateway: {
+          cashfree: stats.cashfreeCount || 0,
+          razorpay: stats.razorpayCount || 0,
+        },
+      },
+    };
+  }
+
+  async getWebhookSummary(filters = {}, context = {}) {
+    const report = await this.getWebhookReport(filters, { page: 1, limit: 1 }, context);
+    return report.summary;
+  }
+
+  async getWebhookById(id, context = {}) {
+    const filter = { _id: id };
+    if (context.tenantId) {
+      filter.tenantId = context.tenantId;
+    }
+
+    const log = await this.webhookLogRepository.model
+      .findOne(filter)
+      .populate('tenantId', 'name subdomain')
+      .populate('branchId', 'name code')
+      .populate('paymentId', 'amount currency status type referenceId gatewayOrderId gatewayPaymentId')
+      .populate('bookingId', 'bookingNumber status payment courtId date startTime endTime')
+      .lean()
+      .exec();
+
+    if (!log) {
+      throw new NotFoundError(`Webhook log entry with ID '${id}' not found`);
+    }
+
+    return log;
   }
 
   async getFinancialSummary(filters = {}, context = {}) {
