@@ -197,28 +197,37 @@ export class FinanceService {
     }
 
     const eventType = event.type || event.event || '';
-    if (eventType === 'TEST_WEBHOOK') {
+    if (eventType === 'TEST_WEBHOOK' || eventType.toUpperCase().includes('TEST')) {
       return { processed: true, message: 'Cashfree test webhook verified successfully' };
     }
 
+    const linkData = event.data?.link_id ? event.data : null;
     const paymentData = event.data?.payment;
     const orderData = event.data?.order;
 
-    const gatewayPaymentId = paymentData?.cf_payment_id ? String(paymentData.cf_payment_id) : '';
-    const gatewayOrderId = orderData?.order_id || '';
+    const gatewayPaymentId = paymentData?.cf_payment_id
+      ? String(paymentData.cf_payment_id)
+      : (orderData?.transaction_id ? String(orderData.transaction_id) : '');
 
-    if (!gatewayPaymentId && !gatewayOrderId) {
+    const gatewayOrderId = orderData?.order_id || (linkData ? String(linkData.link_id || linkData.cf_link_id) : '');
+    const linkId = linkData ? String(linkData.link_id || linkData.cf_link_id) : '';
+
+    if (!gatewayPaymentId && !gatewayOrderId && !linkId) {
       return { processed: true, message: 'No payment or order details found in Cashfree webhook' };
     }
 
     const isSuccess = eventType === 'PAYMENT_SUCCESS_WEBHOOK' ||
+      (eventType === 'PAYMENT_LINK_EVENT' && (linkData?.link_status === 'PAID' || orderData?.transaction_status === 'SUCCESS')) ||
       paymentData?.payment_status === 'SUCCESS' ||
-      orderData?.order_status === 'PAID';
+      orderData?.order_status === 'PAID' ||
+      orderData?.transaction_status === 'SUCCESS';
 
     const isFailure = eventType === 'PAYMENT_FAILED_WEBHOOK' ||
       eventType === 'PAYMENT_USER_DROPPED_WEBHOOK' ||
+      (eventType === 'PAYMENT_LINK_EVENT' && ['CANCELLED', 'EXPIRED'].includes(linkData?.link_status)) ||
       paymentData?.payment_status === 'FAILED' ||
-      paymentData?.payment_status === 'CANCELLED';
+      paymentData?.payment_status === 'CANCELLED' ||
+      orderData?.transaction_status === 'FAILED';
 
     const isRefund = eventType === 'REFUND_STATUS_WEBHOOK';
 
@@ -228,7 +237,12 @@ export class FinanceService {
       payment = await this.paymentRepository.findByGatewayPaymentId(gatewayPaymentId);
     }
     if (!payment && gatewayOrderId) {
-      payment = await this.paymentRepository.model.findOne({ gatewayOrderId });
+      payment = await this.paymentRepository.model.findOne({
+        $or: [
+          { gatewayOrderId },
+          { 'metadata.linkId': linkId },
+        ],
+      });
     }
 
     if (payment) {
@@ -260,6 +274,7 @@ export class FinanceService {
           { 'payment.transactionId': gatewayPaymentId },
           { 'payment.cashfree_order_id': gatewayOrderId },
           { 'payment.cashfree_payment_id': gatewayPaymentId },
+          { 'payment.linkId': linkId },
           { bookingNumber: gatewayOrderId },
         ],
       });
@@ -284,6 +299,8 @@ export class FinanceService {
         $or: [
           { paymentId: gatewayPaymentId },
           { 'notes.orderId': gatewayOrderId },
+          { 'notes.linkId': linkId },
+          { 'notes.cfLinkId': linkData?.cf_link_id },
         ],
       });
       if (fee) {

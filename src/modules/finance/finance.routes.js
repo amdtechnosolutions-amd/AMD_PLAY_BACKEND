@@ -89,6 +89,14 @@ export default async function financeRoutes(fastify) {
     handler: financeController.handleCashfreeWebhook.bind(financeController),
   });
 
+  fastify.post('/finance/webhook/cashfree/payment-link', {
+    schema: {
+      description: 'Cashfree payment link webhook listener',
+      tags: ['Finance & Monthly Fees'],
+    },
+    handler: financeController.handleCashfreeWebhook.bind(financeController),
+  });
+
   // Monthly Coaching & Member Fee Billing
   fastify.post('/finance/monthly-fees/generate', {
     schema: {
