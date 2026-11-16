@@ -328,7 +328,9 @@ export class SettingsService {
         };
       }
 
-      const baseUrl = String(environment).toUpperCase() === 'PROD'
+      const isProd = ['PROD', 'PRODUCTION', 'LIVE'].includes(String(environment).toUpperCase()) ||
+        secretKey.startsWith('cfsk_ma_prod_');
+      const baseUrl = isProd
         ? 'https://api.cashfree.com/pg'
         : 'https://sandbox.cashfree.com/pg';
 
@@ -352,10 +354,10 @@ export class SettingsService {
 
         return {
           success: true,
-          mode: String(environment).toUpperCase() === 'PROD' ? 'production' : 'sandbox/test',
-          message: `Cashfree credentials verified successfully (${String(environment).toUpperCase() === 'PROD' ? 'Production Mode' : 'Sandbox Mode'})`,
+          mode: isProd ? 'production' : 'sandbox/test',
+          message: `Cashfree credentials verified successfully (${isProd ? 'Production Mode' : 'Sandbox Mode'})`,
           appId,
-          environment,
+          environment: isProd ? 'PRODUCTION' : 'TEST',
         };
       } catch (err) {
         if (err instanceof ValidationError) throw err;

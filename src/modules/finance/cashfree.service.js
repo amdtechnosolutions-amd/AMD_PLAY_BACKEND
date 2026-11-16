@@ -27,10 +27,13 @@ export class CashfreeService {
           secretKey = (branchCf.secretKey || secretKey).trim();
           apiVersion = (branchCf.apiVersion || apiVersion).trim();
           environment = (branchCf.environment || environment).trim();
-          const baseUrl = String(environment).toUpperCase() === 'PROD'
+          const isProd = ['PROD', 'PRODUCTION', 'LIVE'].includes(String(environment).toUpperCase()) ||
+            secretKey.startsWith('cfsk_ma_prod_');
+          const baseUrl = isProd
             ? 'https://api.cashfree.com/pg'
             : 'https://sandbox.cashfree.com/pg';
-          return { appId, secretKey, apiVersion, environment, baseUrl };
+          const normalizedEnv = isProd ? 'PRODUCTION' : 'TEST';
+          return { appId, secretKey, apiVersion, environment: normalizedEnv, baseUrl };
         }
       } catch (_) {}
     }
@@ -48,11 +51,14 @@ export class CashfreeService {
       } catch (_) {}
     }
 
-    const baseUrl = String(environment).toUpperCase() === 'PROD'
+    const isProd = ['PROD', 'PRODUCTION', 'LIVE'].includes(String(environment).toUpperCase()) ||
+      secretKey.startsWith('cfsk_ma_prod_');
+    const baseUrl = isProd
       ? 'https://api.cashfree.com/pg'
       : 'https://sandbox.cashfree.com/pg';
+    const normalizedEnv = isProd ? 'PRODUCTION' : 'TEST';
 
-    return { appId, secretKey, apiVersion, environment, baseUrl };
+    return { appId, secretKey, apiVersion, environment: normalizedEnv, baseUrl };
   }
 
   /**
