@@ -200,6 +200,8 @@ export class CashfreeService {
       }
     }
 
+    const isProduction = environment === 'PRODUCTION' || environment === 'PROD';
+
     return {
       orderId: normalizedOrderId,
       cfOrderId,
@@ -207,6 +209,10 @@ export class CashfreeService {
       amount: orderAmount,
       currency,
       environment,
+      mode: isProduction ? 'production' : 'sandbox',
+      env: environment,
+      cfEnvironment: isProduction ? 'PRODUCTION' : 'SANDBOX',
+      isProduction,
       orderStatus,
       customer: {
         id: customerId,

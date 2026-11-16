@@ -1332,6 +1332,18 @@ export class BookingService extends BaseService {
       totalAmount,
     };
 
+    const envName = cfOrder.environment || 'PRODUCTION';
+    const isProd = envName === 'PRODUCTION' || envName === 'PROD';
+
+    const gatewayMeta = {
+      gateway: 'cashfree',
+      environment: envName,
+      mode: isProd ? 'production' : 'sandbox',
+      env: envName,
+      cfEnvironment: isProd ? 'PRODUCTION' : 'SANDBOX',
+      isProduction: isProd,
+    };
+
     if (!isMulti) {
       return {
         orderId: cfOrder.orderId,
@@ -1339,8 +1351,7 @@ export class BookingService extends BaseService {
         paymentSessionId: cfOrder.paymentSessionId,
         amount: totalAmount,
         currency: 'INR',
-        gateway: 'cashfree',
-        environment: cfOrder.environment,
+        ...gatewayMeta,
         pricing: pricingInfo,
         slot: slotSummaries[0],
         customer: customerDetails,
@@ -1353,8 +1364,7 @@ export class BookingService extends BaseService {
       paymentSessionId: cfOrder.paymentSessionId,
       amount: totalAmount,
       currency: 'INR',
-      gateway: 'cashfree',
-      environment: cfOrder.environment,
+      ...gatewayMeta,
       isMultiSlot: true,
       totalSlots: slotSummaries.length,
       pricing: pricingInfo,
