@@ -316,26 +316,62 @@ export class CashfreeService {
     branchId = null,
     tenantId = null,
   }) {
-    if (!signature || !timestamp || !rawBody) {
-      return false;
-    }
+    // 1. Allow dashboard test events immediately
+    try {
+      const parsed = typeof rawBody === 'string' ? JSON.parse(rawBody) : rawBody;
+      if (parsed?.type === 'TEST_WEBHOOK' || parsed?.event === 'TEST_WEBHOOK') {
+        return true;
+      }
+    } catch (_) {}
 
-    const { secretKey } = await this.resolveCredentials(branchId, tenantId);
-    if (!secretKey || secretKey.includes('mock')) {
+    if (!signature || !timestamp || !rawBody) {
       return (env.isDev || env.isTest);
     }
 
-    try {
-      const payloadToSign = `${timestamp}${rawBody}`;
-      const computedSignature = crypto
-        .createHmac('sha256', secretKey)
-        .update(payloadToSign)
-        .digest('base64');
-
-      return computedSignature === signature;
-    } catch (_) {
-      return false;
+    const secretKeysToTry = [];
+    if (tenantId) {
+      const { secretKey } = await this.resolveCredentials(branchId, tenantId);
+      if (secretKey && !secretKey.includes('mock')) {
+        secretKeysToTry.push(secretKey.trim());
+      }
     }
+
+    if (env.CASHFREE_SECRET_KEY && !env.CASHFREE_SECRET_KEY.includes('mock')) {
+      secretKeysToTry.push(env.CASHFREE_SECRET_KEY.trim());
+    }
+
+    // Also look up all configured tenant Cashfree secret keys across multi-tenant database
+    try {
+      const { tenantRepository } = await import('../tenants/tenant.repository.js');
+      const { settingsService } = await import('../settings/settings.service.js');
+      const tenants = await tenantRepository.model.find({});
+      for (const t of tenants) {
+        const s = await settingsService.getSettings(t._id);
+        const cfKey = s?.paymentGateways?.cashfree?.secretKey;
+        if (cfKey && !cfKey.includes('mock') && !secretKeysToTry.includes(cfKey.trim())) {
+          secretKeysToTry.push(cfKey.trim());
+        }
+      }
+    } catch (_) {}
+
+    if (secretKeysToTry.length === 0) {
+      return (env.isDev || env.isTest);
+    }
+
+    const payloadToSign = `${timestamp}${rawBody}`;
+    for (const key of secretKeysToTry) {
+      try {
+        const computedSignature = crypto
+          .createHmac('sha256', key)
+          .update(payloadToSign)
+          .digest('base64');
+        if (computedSignature === signature) {
+          return true;
+        }
+      } catch (_) {}
+    }
+
+    return false;
   }
 
   /**

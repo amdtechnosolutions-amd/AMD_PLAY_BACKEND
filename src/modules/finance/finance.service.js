@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { expenseRepository, paymentRepository } from './finance.repository.js';
 import { MonthlyFee } from './monthly-fee.model.js';
+import { bookingRepository } from '../bookings/booking.repository.js';
 import { cashfreeService } from './cashfree.service.js';
 import { ValidationError, NotFoundError } from '../../errors/AppError.js';
 import { env } from '../../config/env.js';
@@ -196,6 +197,10 @@ export class FinanceService {
     }
 
     const eventType = event.type || event.event || '';
+    if (eventType === 'TEST_WEBHOOK') {
+      return { processed: true, message: 'Cashfree test webhook verified successfully' };
+    }
+
     const paymentData = event.data?.payment;
     const orderData = event.data?.order;
 
@@ -206,6 +211,18 @@ export class FinanceService {
       return { processed: true, message: 'No payment or order details found in Cashfree webhook' };
     }
 
+    const isSuccess = eventType === 'PAYMENT_SUCCESS_WEBHOOK' ||
+      paymentData?.payment_status === 'SUCCESS' ||
+      orderData?.order_status === 'PAID';
+
+    const isFailure = eventType === 'PAYMENT_FAILED_WEBHOOK' ||
+      eventType === 'PAYMENT_USER_DROPPED_WEBHOOK' ||
+      paymentData?.payment_status === 'FAILED' ||
+      paymentData?.payment_status === 'CANCELLED';
+
+    const isRefund = eventType === 'REFUND_STATUS_WEBHOOK';
+
+    // 1. Update Payment ledger if exists
     let payment = null;
     if (gatewayPaymentId) {
       payment = await this.paymentRepository.findByGatewayPaymentId(gatewayPaymentId);
@@ -214,30 +231,80 @@ export class FinanceService {
       payment = await this.paymentRepository.model.findOne({ gatewayOrderId });
     }
 
-    if (!payment) {
-      return { processed: false, message: `Payment for order ${gatewayOrderId} / ${gatewayPaymentId} not found in ledger` };
+    if (payment) {
+      if (isSuccess) {
+        payment.status = 'success';
+        if (gatewayPaymentId) payment.gatewayPaymentId = gatewayPaymentId;
+        await payment.save();
+      } else if (isFailure) {
+        payment.status = 'failed';
+        await payment.save();
+      } else if (isRefund) {
+        payment.status = 'refunded';
+        const refundData = event.data?.refund;
+        payment.refund = {
+          amount: refundData?.refund_amount || 0,
+          refundedAt: new Date(),
+          gatewayRefundId: String(refundData?.cf_refund_id || refundData?.refund_id || ''),
+          reason: refundData?.refund_note || 'Cashfree webhook refund',
+        };
+        await payment.save();
+      }
     }
 
-    if (eventType === 'PAYMENT_SUCCESS_WEBHOOK' || paymentData?.payment_status === 'SUCCESS' || orderData?.order_status === 'PAID') {
-      payment.status = 'success';
-      if (gatewayPaymentId) payment.gatewayPaymentId = gatewayPaymentId;
-      await payment.save();
-    } else if (eventType === 'PAYMENT_FAILED_WEBHOOK' || paymentData?.payment_status === 'FAILED') {
-      payment.status = 'failed';
-      await payment.save();
-    } else if (eventType === 'REFUND_STATUS_WEBHOOK') {
-      payment.status = 'refunded';
-      const refundData = event.data?.refund;
-      payment.refund = {
-        amount: refundData?.refund_amount || 0,
-        refundedAt: new Date(),
-        gatewayRefundId: String(refundData?.cf_refund_id || refundData?.refund_id || ''),
-        reason: refundData?.refund_note || 'Cashfree webhook refund',
-      };
-      await payment.save();
-    }
+    // 2. Update Court Booking if exists (for mobile app & web async confirmation)
+    try {
+      const bookings = await bookingRepository.model.find({
+        $or: [
+          { 'payment.transactionId': gatewayOrderId },
+          { 'payment.transactionId': gatewayPaymentId },
+          { 'payment.cashfree_order_id': gatewayOrderId },
+          { 'payment.cashfree_payment_id': gatewayPaymentId },
+          { bookingNumber: gatewayOrderId },
+        ],
+      });
 
-    return { processed: true, eventType, orderId: gatewayOrderId, status: payment.status };
+      for (const b of bookings) {
+        if (isSuccess) {
+          b.payment.status = 'paid';
+          if (gatewayPaymentId) b.payment.transactionId = gatewayPaymentId;
+          b.status = 'confirmed';
+          await b.save();
+        } else if (isFailure && b.status !== 'confirmed') {
+          b.payment.status = 'failed';
+          b.status = 'cancelled';
+          await b.save();
+        }
+      }
+    } catch (_) {}
+
+    // 3. Update Monthly Coaching / Member Fee invoice if exists
+    try {
+      const fee = await MonthlyFee.findOne({
+        $or: [
+          { paymentId: gatewayPaymentId },
+          { 'notes.orderId': gatewayOrderId },
+        ],
+      });
+      if (fee) {
+        if (isSuccess) {
+          fee.status = 'paid';
+          fee.paidAt = new Date();
+          await fee.save();
+        } else if (isFailure && fee.status !== 'paid') {
+          fee.status = 'failed';
+          await fee.save();
+        }
+      }
+    } catch (_) {}
+
+    return {
+      processed: true,
+      eventType,
+      orderId: gatewayOrderId,
+      paymentId: gatewayPaymentId,
+      status: isSuccess ? 'success' : isFailure ? 'failed' : isRefund ? 'refunded' : 'received',
+    };
   }
 
   async getFinancialSummary(filters = {}, context = {}) {
