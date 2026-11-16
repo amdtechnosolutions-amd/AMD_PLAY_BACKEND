@@ -4,6 +4,7 @@ import { branchRepository } from '../branches/branch.repository.js';
 import { sportRepository } from '../sports/sport.repository.js';
 import { bookingRepository } from '../bookings/booking.repository.js';
 import { batchRepository } from '../coaching/coaching.repository.js';
+import { tenantRepository } from '../tenants/tenant.repository.js';
 import { acquireLock, releaseLock, getLock } from '../../config/redis.js';
 import { NotFoundError, ConflictError, ValidationError } from '../../errors/AppError.js';
 import { SLOT_STATUS, ROLES } from '../../config/constants.js';
@@ -615,7 +616,7 @@ export class SlotService {
     const holdId = payload.holdId || crypto.randomUUID();
     const acquiredLocks = [];
     const heldSlotResults = [];
-    let totalBasePrice = 0;
+    let totalGrossPrice = 0;
 
     try {
       for (const item of validatedSlots) {
@@ -652,12 +653,14 @@ export class SlotService {
         acquiredLocks.push({ key: lockKey, expiresAt: actualExpiresAt });
 
         const priceInfo = this._calculateSlotPrice(resource.pricing, date, startTime, context.user);
-        totalBasePrice += (priceInfo.finalPrice ?? priceInfo.basePrice ?? 0);
+        const slotGrossPrice = priceInfo.finalPrice ?? priceInfo.basePrice ?? 0;
+        totalGrossPrice += slotGrossPrice;
 
         heldSlotResults.push({
           holdId: actualHoldId,
           key: lockKey,
           expiresAt: actualExpiresAt,
+          grossPrice: slotGrossPrice,
           pricing: priceInfo,
           slot: {
             resourceId: resource._id,
@@ -677,9 +680,30 @@ export class SlotService {
       throw holdErr;
     }
 
-    const taxRate = 18;
-    const taxAmount = Math.round(totalBasePrice * (taxRate / 100));
-    const totalAmount = totalBasePrice + taxAmount;
+    const tenant = tenantId ? await tenantRepository.findById(tenantId) : null;
+    const taxRate = tenant?.settings?.taxPercentage ?? 18;
+    const discountAmount = 0;
+    const totalAmount = Math.max(0, totalGrossPrice - discountAmount);
+    const taxAmount = taxRate > 0
+      ? Math.round(totalAmount - (totalAmount / (1 + taxRate / 100)))
+      : 0;
+    const totalBasePrice = totalAmount - taxAmount;
+
+    // Adjust itemized slot summaries for inclusive tax breakdown
+    for (const h of heldSlotResults) {
+      const sGross = h.grossPrice;
+      const sTax = taxRate > 0 ? Math.round(sGross - (sGross / (1 + taxRate / 100))) : 0;
+      const sBase = sGross - sTax;
+      h.pricing = {
+        ...h.pricing,
+        basePrice: sBase,
+        taxRate,
+        taxAmount: sTax,
+        discountAmount: 0,
+        totalAmount: sGross,
+      };
+      delete h.grossPrice;
+    }
 
     // Single-slot backward compatibility response format
     if (slotsToHold.length === 1 && !payload.slots) {
@@ -798,12 +822,16 @@ export class SlotService {
         throw new NotFoundError(`Resource with ID '${resourceId}' not found`);
       }
 
+      const tenant = await tenantRepository.findById(resource.tenantId || tenantId);
+      const taxRate = tenant?.settings?.taxPercentage ?? 18;
       const priceDetails = this._calculateSlotPrice(resource.pricing, date, startTime, context.user);
-      const basePrice = priceDetails.finalPrice ?? priceDetails.basePrice ?? 0;
-      const taxRate = 18;
-      const taxAmount = Math.round(basePrice * (taxRate / 100));
+      const grossPrice = priceDetails.finalPrice ?? priceDetails.basePrice ?? 0;
       const discountAmount = 0;
-      const totalAmount = basePrice + taxAmount - discountAmount;
+      const totalAmount = Math.max(0, grossPrice - discountAmount);
+      const taxAmount = taxRate > 0
+        ? Math.round(totalAmount - (totalAmount / (1 + taxRate / 100)))
+        : 0;
+      const basePrice = totalAmount - taxAmount;
 
       return {
         resourceId: resource._id,
@@ -817,24 +845,36 @@ export class SlotService {
         discountAmount,
         totalAmount,
         currency: 'INR',
-        pricing: priceDetails,
+        pricing: {
+          ...priceDetails,
+          basePrice,
+          taxRate,
+          taxAmount,
+          discountAmount,
+          totalAmount,
+        },
       };
     }
 
     // Multi-slot pricing
-    let totalBasePrice = 0;
+    let totalGrossPrice = 0;
     const itemizedSlots = [];
+    let resolvedTenantId = tenantId;
 
     for (const item of slotsToPrice) {
       const { resourceId, date, startTime, endTime } = item;
       let resource = null;
-      if (tenantId) resource = await resourceRepository.findById(resourceId, tenantId);
+      if (resolvedTenantId) resource = await resourceRepository.findById(resourceId, resolvedTenantId);
       if (!resource) resource = await resourceRepository.model.findById(resourceId);
       if (!resource) throw new NotFoundError(`Resource with ID '${resourceId}' not found`);
 
+      if (!resolvedTenantId && resource.tenantId) {
+        resolvedTenantId = resource.tenantId;
+      }
+
       const priceDetails = this._calculateSlotPrice(resource.pricing, date, startTime, context.user);
-      const slotBasePrice = priceDetails.finalPrice ?? priceDetails.basePrice ?? 0;
-      totalBasePrice += slotBasePrice;
+      const slotGrossPrice = priceDetails.finalPrice ?? priceDetails.basePrice ?? 0;
+      totalGrossPrice += slotGrossPrice;
 
       itemizedSlots.push({
         resourceId: resource._id,
@@ -843,15 +883,37 @@ export class SlotService {
         date,
         startTime,
         endTime,
-        basePrice: slotBasePrice,
+        grossPrice: slotGrossPrice,
         pricing: priceDetails,
       });
     }
 
-    const taxRate = 18;
-    const taxAmount = Math.round(totalBasePrice * (taxRate / 100));
+    const tenant = resolvedTenantId ? await tenantRepository.findById(resolvedTenantId) : null;
+    const taxRate = tenant?.settings?.taxPercentage ?? 18;
     const discountAmount = 0;
-    const totalAmount = totalBasePrice + taxAmount - discountAmount;
+    const totalAmount = Math.max(0, totalGrossPrice - discountAmount);
+    const taxAmount = taxRate > 0
+      ? Math.round(totalAmount - (totalAmount / (1 + taxRate / 100)))
+      : 0;
+    const totalBasePrice = totalAmount - taxAmount;
+
+    for (const s of itemizedSlots) {
+      const sGross = s.grossPrice;
+      const sTax = taxRate > 0 ? Math.round(sGross - (sGross / (1 + taxRate / 100))) : 0;
+      const sBase = sGross - sTax;
+      s.taxAmount = sTax;
+      s.totalAmount = sGross;
+      s.basePrice = sBase;
+      s.pricing = {
+        ...s.pricing,
+        basePrice: sBase,
+        taxRate,
+        taxAmount: sTax,
+        discountAmount: 0,
+        totalAmount: sGross,
+      };
+      delete s.grossPrice;
+    }
 
     return {
       isMultiSlot: true,

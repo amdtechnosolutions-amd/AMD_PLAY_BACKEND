@@ -285,7 +285,7 @@ export class BookingService extends BaseService {
     const taxRate = tenant?.settings?.taxPercentage ?? 18;
 
     // =========================================================================
-    // 2. Pricing Calculation across all slots
+    // 2. Pricing Calculation across all slots (Inclusive of Tax)
     // =========================================================================
     let totalBasePrice = 0;
     const pricedSlots = validatedSlots.map(({ slotItem, resource, lockKey }) => {
@@ -295,10 +295,15 @@ export class BookingService extends BaseService {
         slotItem.startTime,
         context.user
       );
-      const slotBasePrice = pricingDetails.finalPrice ?? pricingDetails.basePrice ?? 0;
+      // The price set by the academy on the resource is INCLUSIVE of tax
+      const slotGrossPrice = pricingDetails.finalPrice ?? pricingDetails.basePrice ?? 0;
+      const slotDiscount = 0;
+      const slotTotal = Math.max(0, slotGrossPrice - slotDiscount);
+      const slotTax = taxRate > 0
+        ? Math.round(slotTotal - (slotTotal / (1 + taxRate / 100)))
+        : 0;
+      const slotBasePrice = slotTotal - slotTax;
       totalBasePrice += slotBasePrice;
-      const slotTax = Math.round((slotBasePrice * taxRate) / 100);
-      const slotTotal = slotBasePrice + slotTax;
 
       return {
         slotItem,
@@ -308,15 +313,15 @@ export class BookingService extends BaseService {
           basePrice: slotBasePrice,
           taxRate,
           taxAmount: slotTax,
-          discountAmount: 0,
+          discountAmount: slotDiscount,
           totalAmount: slotTotal,
         },
       };
     });
 
-    const totalTaxAmount = Math.round((totalBasePrice * taxRate) / 100);
+    const grandTotalAmount = pricedSlots.reduce((sum, p) => sum + p.pricing.totalAmount, 0);
+    const totalTaxAmount = pricedSlots.reduce((sum, p) => sum + p.pricing.taxAmount, 0);
     const totalDiscountAmount = 0;
-    const grandTotalAmount = totalBasePrice + totalTaxAmount - totalDiscountAmount;
 
     // =========================================================================
     // 3. Generate Master Group Identifiers & Access PIN
@@ -956,7 +961,7 @@ export class BookingService extends BaseService {
 
     let tenantId = initialTenantId;
     let user = initialUser;
-    let totalBasePrice = 0;
+    let totalGrossAmount = 0;
     const slotSummaries = [];
     let primaryResource = initResource;
     let resolvedTenantId = tenantId;
@@ -994,8 +999,9 @@ export class BookingService extends BaseService {
         slotItem.startTime,
         context.user
       );
-      const slotBasePrice = pricingDetails.finalPrice ?? pricingDetails.basePrice ?? 0;
-      totalBasePrice += slotBasePrice;
+      // Resource set price is INCLUSIVE of tax
+      const slotGrossPrice = pricingDetails.finalPrice ?? pricingDetails.basePrice ?? 0;
+      totalGrossAmount += slotGrossPrice;
 
       slotSummaries.push({
         resourceId: resource._id,
@@ -1004,15 +1010,27 @@ export class BookingService extends BaseService {
         date: slotItem.date,
         startTime: slotItem.startTime,
         endTime: slotItem.endTime,
-        basePrice: slotBasePrice,
+        basePrice: slotGrossPrice,
       });
     }
 
     const tenant = await tenantRepository.findById(resolvedTenantId);
     const taxRate = tenant?.settings?.taxPercentage ?? 18;
-    const taxAmount = Math.round((totalBasePrice * taxRate) / 100);
     const discountAmount = 0;
-    const totalAmount = totalBasePrice + taxAmount - discountAmount;
+    const totalAmount = Math.max(0, totalGrossAmount - discountAmount);
+    const taxAmount = taxRate > 0
+      ? Math.round(totalAmount - (totalAmount / (1 + taxRate / 100)))
+      : 0;
+    const totalBasePrice = totalAmount - taxAmount;
+
+    // Adjust itemized slot summaries for inclusive tax breakdown
+    for (const s of slotSummaries) {
+      const sGross = s.basePrice;
+      const sTax = taxRate > 0 ? Math.round(sGross - (sGross / (1 + taxRate / 100))) : 0;
+      s.taxAmount = sTax;
+      s.totalAmount = sGross;
+      s.basePrice = sGross - sTax;
+    }
 
     // Create Razorpay Order
     const receipt = `bk_${Date.now().toString().slice(-8)}`;
@@ -1200,7 +1218,7 @@ export class BookingService extends BaseService {
     }
 
     let user = initialUser;
-    let totalBasePrice = 0;
+    let totalGrossAmount = 0;
     const slotSummaries = [];
     let primaryResource = initResource;
     let resolvedTenantId = initialTenantId;
@@ -1238,8 +1256,9 @@ export class BookingService extends BaseService {
         slotItem.startTime,
         context.user
       );
-      const slotBasePrice = pricingDetails.finalPrice ?? pricingDetails.basePrice ?? 0;
-      totalBasePrice += slotBasePrice;
+      // Resource set price is INCLUSIVE of tax
+      const slotGrossPrice = pricingDetails.finalPrice ?? pricingDetails.basePrice ?? 0;
+      totalGrossAmount += slotGrossPrice;
 
       slotSummaries.push({
         resourceId: resource._id,
@@ -1248,15 +1267,27 @@ export class BookingService extends BaseService {
         date: slotItem.date,
         startTime: slotItem.startTime,
         endTime: slotItem.endTime,
-        basePrice: slotBasePrice,
+        basePrice: slotGrossPrice,
       });
     }
 
     const tenant = await tenantRepository.findById(resolvedTenantId);
     const taxRate = tenant?.settings?.taxPercentage ?? 18;
-    const taxAmount = Math.round((totalBasePrice * taxRate) / 100);
     const discountAmount = 0;
-    const totalAmount = totalBasePrice + taxAmount - discountAmount;
+    const totalAmount = Math.max(0, totalGrossAmount - discountAmount);
+    const taxAmount = taxRate > 0
+      ? Math.round(totalAmount - (totalAmount / (1 + taxRate / 100)))
+      : 0;
+    const totalBasePrice = totalAmount - taxAmount;
+
+    // Adjust itemized slot summaries for inclusive tax breakdown
+    for (const s of slotSummaries) {
+      const sGross = s.basePrice;
+      const sTax = taxRate > 0 ? Math.round(sGross - (sGross / (1 + taxRate / 100))) : 0;
+      s.taxAmount = sTax;
+      s.totalAmount = sGross;
+      s.basePrice = sGross - sTax;
+    }
 
     if (!user) {
       user = (await userRepository.findById(userId, resolvedTenantId)) || (await userRepository.findById(userId));

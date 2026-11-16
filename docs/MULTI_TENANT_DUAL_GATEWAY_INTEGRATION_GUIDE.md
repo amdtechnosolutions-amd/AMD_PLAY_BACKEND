@@ -785,3 +785,4 @@ Each Tenant Academy Administrator can independently select and configure their p
 | **Bank Account Isolation** | Funds go to Tenant's Cashfree Account | Funds go to Tenant's Razorpay Account | Yes (Tenant API Keys are isolated) |
 | **Guest Checkout (No Login)** | Fully Supported | Fully Supported | Yes (Tenant detected via Court ID) |
 | **Door Access PIN Pass** | Auto-generated | Auto-generated | Yes (Same response payload) |
+
