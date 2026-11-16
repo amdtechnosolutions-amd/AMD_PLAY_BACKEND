@@ -1435,7 +1435,17 @@ export class BookingService extends BaseService {
     let targetGateway = (data.gateway || '').toLowerCase();
 
     if (!targetGateway) {
-      const tenantId = context.tenantId || data.tenantId;
+      let tenantId = context.tenantId || data.tenantId;
+      if (!tenantId) {
+        const firstResourceId = data.resourceId || data.slots?.[0]?.resourceId;
+        if (firstResourceId) {
+          const resDoc = await resourceRepository.findById(firstResourceId);
+          if (resDoc?.tenantId) {
+            tenantId = resDoc.tenantId;
+          }
+        }
+      }
+
       if (tenantId) {
         try {
           const tenantSettings = await settingsService.getSettings(tenantId);
@@ -1470,7 +1480,16 @@ export class BookingService extends BaseService {
       } else if (data.cashfree_order_id || data.paymentSessionId || (data.orderId && !data.razorpay_payment_id)) {
         targetGateway = 'cashfree';
       } else {
-        const tenantId = context.tenantId || data.tenantId;
+        let tenantId = context.tenantId || data.tenantId;
+        if (!tenantId) {
+          const firstResourceId = data.resourceId || data.slots?.[0]?.resourceId;
+          if (firstResourceId) {
+            const resDoc = await resourceRepository.findById(firstResourceId);
+            if (resDoc?.tenantId) {
+              tenantId = resDoc.tenantId;
+            }
+          }
+        }
         if (tenantId) {
           try {
             const tenantSettings = await settingsService.getSettings(tenantId);
