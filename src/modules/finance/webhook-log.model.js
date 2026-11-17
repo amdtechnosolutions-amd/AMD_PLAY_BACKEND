@@ -109,8 +109,6 @@ webhookLogSchema.index({ tenantId: 1, gateway: 1, receivedAt: -1 });
 webhookLogSchema.index({ tenantId: 1, status: 1, receivedAt: -1 });
 webhookLogSchema.index({ gateway: 1, receivedAt: -1 });
 webhookLogSchema.index({ status: 1, receivedAt: -1 });
-webhookLogSchema.index({ gatewayOrderId: 1 });
-webhookLogSchema.index({ gatewayPaymentId: 1 });
 
 export const WebhookLog = mongoose.models.WebhookLog || mongoose.model('WebhookLog', webhookLogSchema);
 

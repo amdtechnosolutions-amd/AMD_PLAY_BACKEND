@@ -564,6 +564,9 @@ export class FinanceService {
             const paymentStatus = String(
               (successPayment || latestPayment)?.payment_status || ''
             ).toUpperCase();
+            const terminationReason = String(
+              orderData?.order_tags?.orderTerminationReason || ''
+            ).trim();
 
             let nextStatus = null;
             let nextEventType = null;
@@ -573,10 +576,18 @@ export class FinanceService {
               nextStatus = 'success';
               nextEventType = 'PAYMENT_SUCCESS_WEBHOOK';
               nextError = null;
-            } else if (paymentStatus === 'USER_DROPPED') {
+            } else if (
+              paymentStatus === 'USER_DROPPED' ||
+              Boolean(terminationReason) ||
+              (paymentStatus === 'NOT_ATTEMPTED' &&
+                Date.now() - new Date(latestPayment?.payment_time || logDoc.receivedAt).getTime() > 90 * 1000)
+            ) {
               nextStatus = 'dropped';
               nextEventType = 'PAYMENT_USER_DROPPED_WEBHOOK';
-              nextError = latestPayment?.payment_message || 'User dropped payment on Cashfree checkout';
+              nextError =
+                latestPayment?.payment_message ||
+                terminationReason ||
+                'User dropped payment on Cashfree checkout';
             } else if (paymentStatus === 'FAILED') {
               nextStatus = 'failed';
               nextEventType = 'PAYMENT_FAILED_WEBHOOK';
@@ -592,12 +603,12 @@ export class FinanceService {
             } else if (
               orderStatus === 'ACTIVE' &&
               (!payments || payments.length === 0) &&
-              Date.now() - new Date(logDoc.receivedAt).getTime() > 10 * 60 * 1000
+              Date.now() - new Date(logDoc.receivedAt).getTime() > 5 * 60 * 1000
             ) {
-              // User closed/cancelled checkout without picking a payment method and slot hold expired
-              nextStatus = 'cancelled';
-              nextEventType = 'ORDER_CANCELLED';
-              nextError = 'Checkout closed / cancelled by user before payment';
+              // User closed/cancelled checkout without picking a payment method
+              nextStatus = 'dropped';
+              nextEventType = 'PAYMENT_USER_DROPPED_WEBHOOK';
+              nextError = 'Checkout closed / dropped by user before payment';
             }
 
             if (nextStatus) {
