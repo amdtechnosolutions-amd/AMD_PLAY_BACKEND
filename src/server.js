@@ -4,6 +4,7 @@ import { logger } from './utils/logger.js';
 import { iotSchedulerService } from './modules/iot/iot-scheduler.service.js';
 import { deviceSyncQueueService } from './modules/iot/device-sync-queue.service.js';
 import { monthlyFeeSchedulerService } from './modules/finance/monthly-fee-scheduler.service.js';
+import { financeService } from './modules/finance/finance.service.js';
 // Server initialization - port 5005
 
 const startServer = async () => {
@@ -19,6 +20,7 @@ const startServer = async () => {
     iotSchedulerService.start();
     deviceSyncQueueService.start();
     monthlyFeeSchedulerService.start();
+    financeService.startPaymentReconciler(60000);
 
     logger.info(`Sports Academy API running at http://${env.HOST}:${env.PORT}`);
     logger.info(`Swagger Documentation available at http://localhost:${env.PORT}/api/docs`);
@@ -29,6 +31,7 @@ const startServer = async () => {
         iotSchedulerService.stop();
         deviceSyncQueueService.stop();
         monthlyFeeSchedulerService.stop();
+        financeService.stopPaymentReconciler();
         await app.close();
         logger.info('Fastify server closed successfully. Exiting.');
         process.exit(0);

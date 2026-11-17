@@ -93,6 +93,42 @@ class LockManager {
   }
 
   /**
+   * Extend or upsert lock TTL and metadata (used when transitioning from slot hold to payment checkout)
+   */
+  async extendLock(key, ttlSeconds = 420, metadataUpdate = {}) {
+    const existing = await this.getLock(key);
+    const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
+    const merged = { ...(existing || {}), ...metadataUpdate, key, expiresAt };
+    const payload = JSON.stringify(merged);
+
+    if (this.isConnected && this.redis) {
+      try {
+        await this.redis.set(key, payload, 'PX', ttlSeconds * 1000);
+        return { extended: true, expiresAt, metadata: merged };
+      } catch (err) {
+        logger.warn({ err: err.message }, 'Redis extendLock failed. Falling back to in-memory store.');
+      }
+    }
+
+    const prev = this.inMemoryStore.get(key);
+    if (prev?.timer) {
+      clearTimeout(prev.timer);
+    }
+
+    const timer = setTimeout(() => {
+      this.inMemoryStore.delete(key);
+    }, ttlSeconds * 1000);
+
+    this.inMemoryStore.set(key, {
+      data: merged,
+      expiresTimestamp: Date.now() + ttlSeconds * 1000,
+      timer,
+    });
+
+    return { extended: true, expiresAt, metadata: merged };
+  }
+
+  /**
    * Retrieve active lock info
    */
   async getLock(key) {
@@ -171,6 +207,7 @@ class LockManager {
 
 export const lockManager = new LockManager();
 export const acquireLock = lockManager.acquireLock.bind(lockManager);
+export const extendLock = lockManager.extendLock.bind(lockManager);
 export const releaseLock = lockManager.releaseLock.bind(lockManager);
 export const getLock = lockManager.getLock.bind(lockManager);
 export const isRedisHealthy = lockManager.isHealthy.bind(lockManager);

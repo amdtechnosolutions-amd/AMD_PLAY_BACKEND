@@ -134,6 +134,8 @@ export class CashfreeService {
     notifyUrl = '',
     branchId = null,
     tenantId = null,
+    orderExpiryMinutes = 17,
+    bookingIntent = null,
   }) {
     if (amount <= 0) {
       throw new ValidationError('Payment amount must be greater than zero');
@@ -173,12 +175,16 @@ export class CashfreeService {
     let cfOrderId = String(Math.floor(1000000 + Math.random() * 9000000));
     let orderStatus = 'ACTIVE';
 
+    const safeExpiryMins = Math.max(16, Number(orderExpiryMinutes) || 17);
+    const orderExpiryIso = new Date(Date.now() + safeExpiryMins * 60 * 1000).toISOString();
+
     if (isLiveKey) {
       try {
         const orderPayload = {
           order_id: normalizedOrderId,
           order_amount: orderAmount,
           order_currency: currency,
+          order_expiry_time: orderExpiryIso,
           customer_details: {
             customer_id: customerId,
             customer_phone: customerPhone,
@@ -244,6 +250,7 @@ export class CashfreeService {
           email: customerEmail,
           phone: customerPhone,
         },
+        bookingIntent: bookingIntent || null,
         payload: {
           type: 'ORDER_CREATED',
           event_time: new Date().toISOString(),
@@ -254,6 +261,7 @@ export class CashfreeService {
               order_amount: orderAmount,
               order_currency: currency,
               order_status: orderStatus,
+              order_expiry_time: orderExpiryIso,
             },
             customer_details: {
               customer_id: customerId,
@@ -278,6 +286,7 @@ export class CashfreeService {
       paymentSessionId,
       amount: orderAmount,
       currency,
+      orderExpiryTime: orderExpiryIso,
       environment,
       mode: isProduction ? 'production' : 'sandbox',
       env: environment,
@@ -316,6 +325,71 @@ export class CashfreeService {
       return [];
     }
     return Array.isArray(res.data) ? res.data : [];
+  }
+
+  /**
+   * Initiate a full or partial refund on Cashfree PG API (used for auto-refunding double-booking conflicts)
+   * Reference: https://www.cashfree.com/docs/api-reference/payments/latest/refunds/create
+   */
+  async initiateRefund({
+    orderId,
+    amount,
+    refundId = null,
+    reason = 'Slot no longer available — automatic full refund',
+    branchId = null,
+    tenantId = null,
+  }) {
+    if (!orderId || !amount || Number(amount) <= 0) {
+      throw new ValidationError('orderId and positive refund amount are required');
+    }
+
+    const credentials = await this.resolveCredentials(branchId, tenantId);
+    const { appId, secretKey } = credentials;
+    const isLiveKey = appId && !appId.includes('mock') && secretKey && !secretKey.includes('mock');
+
+    const safeRefundId = (refundId || `rf_${orderId}_${Date.now()}`)
+      .replace(/[^a-zA-Z0-9_-]/g, '_')
+      .slice(0, 40);
+
+    if (!isLiveKey) {
+      return {
+        refunded: true,
+        mock: true,
+        refundId: safeRefundId,
+        cfRefundId: `cf_rf_mock_${Date.now()}`,
+        refundStatus: 'PENDING',
+        refundAmount: Number(Number(amount).toFixed(2)),
+      };
+    }
+
+    const res = await this._request(
+      `/orders/${encodeURIComponent(orderId)}/refunds`,
+      {
+        method: 'POST',
+        body: {
+          refund_amount: Number(Number(amount).toFixed(2)),
+          refund_id: safeRefundId,
+          refund_note: String(reason || 'Automatic conflict refund').slice(0, 100),
+          refund_speed: 'STANDARD',
+        },
+      },
+      credentials
+    );
+
+    if (!res.ok) {
+      const errMsg = res.data?.message || res.data?.error || 'Cashfree refund request failed';
+      console.error('[Cashfree Refund Error]:', res.data);
+      throw new ValidationError(`Cashfree Refund Error: ${errMsg}`);
+    }
+
+    return {
+      refunded: true,
+      refundId: res.data?.refund_id || safeRefundId,
+      cfRefundId: String(res.data?.cf_refund_id || ''),
+      refundStatus: res.data?.refund_status || 'PENDING',
+      refundAmount: res.data?.refund_amount || Number(Number(amount).toFixed(2)),
+      raw: res.data,
+    };
   }
 
   /**

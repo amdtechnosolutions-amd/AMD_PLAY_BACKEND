@@ -263,11 +263,15 @@ export class BookingService extends BaseService {
 
       const lockKey = `lock:slot:${resolvedTenantId}:${resource._id}:${slotItem.date}:${slotItem.startTime}`;
       const activeLock = await getLock(lockKey);
-      if (activeLock) {
+      if (activeLock && !data._bypassHoldCheck) {
         const lockUserId = activeLock.userId?.toString();
+        const incomingOrderId = data.cashfree_order_id || data.razorpay_order_id || data.orderId || '';
+        const matchesOrder = incomingOrderId && activeLock.orderId && String(activeLock.orderId) === String(incomingOrderId);
         const matchesHold = data.holdId && activeLock.holdId && activeLock.holdId === data.holdId;
-        const isGuestOrSame = !lockUserId || lockUserId === 'guest' || lockUserId === userId.toString();
-        if (!matchesHold && !isGuestOrSame) {
+        const matchesUser = lockUserId && lockUserId !== 'guest' && lockUserId === userId.toString();
+        // If lock is explicitly bound to another payment order, reject any other user/guest
+        const isUnboundGuestLock = !activeLock.orderId && (!lockUserId || lockUserId === 'guest');
+        if (!matchesOrder && !matchesHold && !matchesUser && !isUnboundGuestLock) {
           throw new ConflictError(
             `Slot ${slotItem.startTime} - ${slotItem.endTime} on ${slotItem.date} is currently held by another user during checkout. Please try again shortly.`
           );
@@ -580,6 +584,13 @@ export class BookingService extends BaseService {
     // =========================================================================
     try {
       await iotSchedulerService.onBookingCreated(createdDocs, { tenantId: resolvedTenantId });
+      // For last-5-minute / immediate bookings (starting within 15m or already active), evaluate court lights immediately
+      const hasImmediateSlot = createdDocs.some(({ doc }) => iotSchedulerService.isBookingActive(doc));
+      if (hasImmediateSlot) {
+        iotSchedulerService.evaluateCourtSchedules().catch((evalErr) => {
+          console.warn('[Booking] Immediate IoT light evaluation warning:', evalErr.message);
+        });
+      }
     } catch (iotErr) {
       console.warn('[Booking] IoT Court schedule actuation warning:', iotErr.message);
     }
@@ -988,9 +999,30 @@ export class BookingService extends BaseService {
         throw new ConflictError(`Court '${resource.name}' is currently under maintenance and cannot be booked`);
       }
 
+      const isStaff = slotService.isStaffRole(context.user?.role);
+      if (!isStaff && slotService.isSlotPastCutoff(slotItem.date, slotItem.startTime, 0)) {
+        throw new ConflictError(
+          `Slot ${slotItem.startTime} - ${slotItem.endTime} on ${slotItem.date} is no longer open for booking. Please choose an upcoming slot.`
+        );
+      }
+
       const isBooked = await bookingRepository.isSlotBooked(resource._id, slotItem.date, slotItem.startTime, resolvedTenantId);
       if (isBooked) {
         throw new ConflictError(`Slot ${slotItem.startTime} - ${slotItem.endTime} on ${slotItem.date} is already booked`);
+      }
+
+      const lockKey = `lock:slot:${resolvedTenantId}:${resource._id}:${slotItem.date}:${slotItem.startTime}`;
+      const existingLock = await getLock(lockKey);
+      if (existingLock) {
+        const lockUserId = existingLock.userId?.toString();
+        const matchesHold = data.holdId && existingLock.holdId && existingLock.holdId === data.holdId;
+        const matchesUser = lockUserId && lockUserId !== 'guest' && lockUserId === userId.toString();
+        const isUnboundGuestLock = !existingLock.orderId && (!lockUserId || lockUserId === 'guest');
+        if (!matchesHold && !matchesUser && !isUnboundGuestLock) {
+          throw new ConflictError(
+            `Slot ${slotItem.startTime} - ${slotItem.endTime} on ${slotItem.date} is currently held by another user during checkout. Please try again in a moment.`
+          );
+        }
       }
 
       const pricingDetails = slotService._calculateSlotPrice(
@@ -1245,9 +1277,30 @@ export class BookingService extends BaseService {
         throw new ConflictError(`Court '${resource.name}' is currently under maintenance and cannot be booked`);
       }
 
+      const isStaff = slotService.isStaffRole(context.user?.role);
+      if (!isStaff && slotService.isSlotPastCutoff(slotItem.date, slotItem.startTime, 0)) {
+        throw new ConflictError(
+          `Slot ${slotItem.startTime} - ${slotItem.endTime} on ${slotItem.date} is no longer open for booking. Please choose an upcoming slot.`
+        );
+      }
+
       const isBooked = await bookingRepository.isSlotBooked(resource._id, slotItem.date, slotItem.startTime, resolvedTenantId);
       if (isBooked) {
         throw new ConflictError(`Slot ${slotItem.startTime} - ${slotItem.endTime} on ${slotItem.date} is already booked`);
+      }
+
+      const lockKey = `lock:slot:${resolvedTenantId}:${resource._id}:${slotItem.date}:${slotItem.startTime}`;
+      const existingLock = await getLock(lockKey);
+      if (existingLock) {
+        const lockUserId = existingLock.userId?.toString();
+        const matchesHold = data.holdId && existingLock.holdId && existingLock.holdId === data.holdId;
+        const matchesUser = lockUserId && lockUserId !== 'guest' && lockUserId === userId.toString();
+        const isUnboundGuestLock = !existingLock.orderId && (!lockUserId || lockUserId === 'guest');
+        if (!matchesHold && !matchesUser && !isUnboundGuestLock) {
+          throw new ConflictError(
+            `Slot ${slotItem.startTime} - ${slotItem.endTime} on ${slotItem.date} is currently held by another user during checkout. Please try again in a moment.`
+          );
+        }
       }
 
       const pricingDetails = slotService._calculateSlotPrice(
@@ -1300,7 +1353,25 @@ export class BookingService extends BaseService {
       phone: user?.phone || data.phone || data.customer?.phone || context.user?.phone || '9999999999',
     };
 
-    // Create Cashfree Order
+    const bookingIntent = {
+      type: 'booking',
+      tenantId: resolvedTenantId.toString(),
+      branchId: primaryResource.branchId ? primaryResource.branchId.toString() : null,
+      userId: userId.toString(),
+      holdId: data.holdId || null,
+      notes: data.notes || '',
+      isMultiSlot: isMulti,
+      slots: slotSummaries.map((s) => ({
+        resourceId: s.resourceId.toString(),
+        resourceName: s.resourceName,
+        date: s.date,
+        startTime: s.startTime,
+        endTime: s.endTime,
+      })),
+      customer: customerDetails,
+    };
+
+    // Create Cashfree Order with 17-minute expiry (Cashfree min 16m) + booking intent snapshot
     const cfOrder = await cashfreeService.createOrder({
       orderId: data.orderId,
       amount: totalAmount,
@@ -1322,7 +1393,21 @@ export class BookingService extends BaseService {
       notifyUrl: data.notifyUrl || '',
       branchId: primaryResource.branchId,
       tenantId: resolvedTenantId,
+      orderExpiryMinutes: 17,
+      bookingIntent,
     });
+
+    // Extend & bind Redis slot holds to 7 minutes (420s) owned strictly by this orderId + userId
+    try {
+      await slotService.extendSlotHolds(slotSummaries, resolvedTenantId, {
+        orderId: cfOrder.orderId,
+        holdId: data.holdId || null,
+        userId: userId.toString(),
+        ttlSeconds: 420,
+      });
+    } catch (extErr) {
+      console.warn('[Booking] Could not extend slot holds on Cashfree order creation:', extErr.message);
+    }
 
     const pricingInfo = {
       basePrice: totalBasePrice,
@@ -1455,17 +1540,67 @@ export class BookingService extends BaseService {
       };
     }
 
-    // Create confirmed booking with Cashfree payment details
-    const bookingResult = await this.createBooking(
-      {
-        ...data,
-        paymentMethod: 'cashfree',
-        cashfree_payment_id: paymentTxnId,
-        cashfree_order_id: orderId,
-        transactionId: paymentTxnId,
-      },
-      context
-    );
+    // Create confirmed booking with Cashfree payment details; auto-refund if slot was taken after hold expiry
+    let bookingResult;
+    try {
+      bookingResult = await this.createBooking(
+        {
+          ...data,
+          paymentMethod: 'cashfree',
+          cashfree_payment_id: paymentTxnId,
+          cashfree_order_id: orderId,
+          transactionId: paymentTxnId,
+        },
+        context
+      );
+    } catch (bookingErr) {
+      if (bookingErr instanceof ConflictError && cfVerification?.verified) {
+        const refundAmount = Number(cfVerification.amount || 0);
+        let refundNote = `Slot conflict after payment: ${bookingErr.message}`;
+        let refundSucceeded = false;
+
+        if (refundAmount > 0) {
+          try {
+            const refundRes = await cashfreeService.initiateRefund({
+              orderId,
+              amount: refundAmount,
+              reason: 'Slot already booked by another player — automatic full refund',
+              branchId: resource.branchId,
+              tenantId: context.tenantId,
+            });
+            refundSucceeded = true;
+            refundNote = `Slot conflict — Automatic full refund of INR ${refundAmount} initiated (Refund ID: ${refundRes.cfRefundId || refundRes.refundId})`;
+            console.warn(`[Booking Conflict Auto-Refund] Order ${orderId}: ${refundNote}`);
+          } catch (refundErr) {
+            refundNote = `Slot conflict — Auto-refund failed (${refundErr.message}). Manual refund required for INR ${refundAmount}.`;
+            console.error(`[Booking Conflict Auto-Refund Failed] Order ${orderId}:`, refundErr.message);
+          }
+        }
+
+        try {
+          const { WebhookLog } = await import('../finance/webhook-log.model.js');
+          await WebhookLog.findOneAndUpdate(
+            { gateway: 'cashfree', gatewayOrderId: orderId },
+            {
+              $set: {
+                status: refundSucceeded ? 'refunded' : 'error',
+                eventType: refundSucceeded ? 'CONFLICT_AUTO_REFUND' : 'CONFLICT_REFUND_FAILED',
+                gatewayPaymentId: paymentTxnId,
+                paymentMethod: cfVerification.paymentMethod || 'upi',
+                error: refundNote,
+              },
+            }
+          );
+        } catch (_) {}
+
+        throw new ConflictError(
+          refundSucceeded
+            ? `This slot was just booked by another player while your payment was processing. An automatic full refund of INR ${refundAmount} has been initiated to your original payment method.`
+            : `This slot was just booked by another player while your payment was processing. Please contact academy support with Order ID ${orderId} for an immediate refund.`
+        );
+      }
+      throw bookingErr;
+    }
 
     // Immediately upgrade the WebhookLog for this Cashfree order to 'success'
     try {

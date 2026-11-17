@@ -5,11 +5,84 @@ import { sportRepository } from '../sports/sport.repository.js';
 import { bookingRepository } from '../bookings/booking.repository.js';
 import { batchRepository } from '../coaching/coaching.repository.js';
 import { tenantRepository } from '../tenants/tenant.repository.js';
-import { acquireLock, releaseLock, getLock } from '../../config/redis.js';
+import { acquireLock, extendLock, releaseLock, getLock } from '../../config/redis.js';
 import { NotFoundError, ConflictError, ValidationError } from '../../errors/AppError.js';
 import { SLOT_STATUS, ROLES } from '../../config/constants.js';
 
+const STAFF_OVERRIDE_ROLES = new Set([
+  ROLES.SUPER_ADMIN,
+  ROLES.PLATFORM_ADMIN,
+  ROLES.TENANT_ADMIN,
+  ROLES.BRANCH_ADMIN,
+  ROLES.MANAGER,
+  ROLES.STAFF,
+  'receptionist',
+  'front_desk',
+]);
+
 export class SlotService {
+  /**
+   * Check whether a slot start time has passed the booking cutoff in IST (+05:30).
+   * Default cutoffMinutes = 0 allows booking up to the exact minute before slot start (e.g. 17:59 for 18:00).
+   */
+  isSlotPastCutoff(date, startTime, cutoffMinutes = 0, now = new Date()) {
+    if (!date || !startTime) return false;
+    const slotStart = new Date(`${date}T${startTime}:00+05:30`);
+    if (Number.isNaN(slotStart.getTime())) return false;
+    const cutoffTimestamp = slotStart.getTime() - Number(cutoffMinutes || 0) * 60 * 1000;
+    return now.getTime() >= cutoffTimestamp;
+  }
+
+  isStaffRole(role) {
+    return Boolean(role && STAFF_OVERRIDE_ROLES.has(role));
+  }
+
+  /**
+   * Extend/bind Redis slot holds to an initiated payment order (7-minute checkout protection window)
+   */
+  async extendSlotHolds(slots = [], tenantId, { orderId, holdId = null, userId = null, ttlSeconds = 420 } = {}) {
+    if (!tenantId || !Array.isArray(slots) || slots.length === 0) return [];
+    const results = [];
+    for (const s of slots) {
+      const resourceId = s.resourceId?._id || s.resourceId;
+      if (!resourceId || !s.date || !s.startTime) continue;
+      const lockKey = `lock:slot:${tenantId}:${resourceId}:${s.date}:${s.startTime}`;
+      const res = await extendLock(lockKey, ttlSeconds, {
+        tenantId: String(tenantId),
+        resourceId: String(resourceId),
+        date: s.date,
+        startTime: s.startTime,
+        endTime: s.endTime || '',
+        ...(orderId ? { orderId: String(orderId) } : {}),
+        ...(holdId ? { holdId: String(holdId) } : {}),
+        ...(userId ? { userId: String(userId) } : {}),
+      });
+      results.push({ lockKey, ...res });
+    }
+    return results;
+  }
+
+  /**
+   * Immediately release Redis slot locks associated with a cancelled/dropped order
+   */
+  async releaseOrderSlots(slots = [], tenantId, expectedOrderId = null) {
+    if (!tenantId || !Array.isArray(slots) || slots.length === 0) return 0;
+    let releasedCount = 0;
+    for (const s of slots) {
+      const resourceId = s.resourceId?._id || s.resourceId;
+      if (!resourceId || !s.date || !s.startTime) continue;
+      const lockKey = `lock:slot:${tenantId}:${resourceId}:${s.date}:${s.startTime}`;
+      const activeLock = await getLock(lockKey);
+      if (!activeLock) continue;
+      // Only release if lock belongs to this order (never release another user's fresh hold!)
+      if (expectedOrderId && activeLock.orderId && String(activeLock.orderId) !== String(expectedOrderId)) {
+        continue;
+      }
+      await releaseLock(lockKey, null, true);
+      releasedCount += 1;
+    }
+    return releasedCount;
+  }
   /**
    * Helper to format total minutes into "HH:MM"
    */
@@ -565,6 +638,9 @@ export class SlotService {
     }
 
     const userId = context.user?.id?.toString() || context.user?.sub?.toString() || payload.userId || 'guest';
+    const isStaff = this.isStaffRole(context.user?.role);
+    const tenantDoc = tenantId ? await tenantRepository.findById(tenantId) : null;
+    const cutoffMinutes = Number(tenantDoc?.settings?.bookingCutoffMinutes ?? 0);
 
     // 1. Verify and pre-validate all requested slots
     const validatedSlots = [];
@@ -572,6 +648,12 @@ export class SlotService {
       const { resourceId, date, startTime, endTime } = slotItem;
       if (!resourceId || !date || !startTime || !endTime) {
         throw new ValidationError('Each slot must include resourceId, date, startTime, and endTime');
+      }
+
+      if (!isStaff && this.isSlotPastCutoff(date, startTime, cutoffMinutes)) {
+        throw new ConflictError(
+          `Slot ${startTime} - ${endTime} on ${date} is no longer open for booking. Please select an upcoming slot.`
+        );
       }
 
       const resource = await resourceRepository.findById(resourceId, tenantId);

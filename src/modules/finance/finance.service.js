@@ -4,7 +4,7 @@ import { expenseRepository, paymentRepository, webhookLogRepository } from './fi
 import { MonthlyFee } from './monthly-fee.model.js';
 import { bookingRepository } from '../bookings/booking.repository.js';
 import { cashfreeService } from './cashfree.service.js';
-import { ValidationError, NotFoundError } from '../../errors/AppError.js';
+import { ValidationError, NotFoundError, ConflictError } from '../../errors/AppError.js';
 import { env } from '../../config/env.js';
 
 export class FinanceService {
@@ -12,6 +12,8 @@ export class FinanceService {
     this.expenseRepository = expenseRepository;
     this.paymentRepository = paymentRepository;
     this.webhookLogRepository = webhookLogRepository;
+    this._reconcilerTimer = null;
+    this._isReconciling = false;
   }
 
   async recordExpense(data, context) {
@@ -497,11 +499,28 @@ export class FinanceService {
         });
       }
 
+      let savedLog = null;
       if (existingLog) {
         Object.assign(existingLog, logData);
-        await existingLog.save();
+        savedLog = await existingLog.save();
       } else {
-        await this.webhookLogRepository.create(logData);
+        savedLog = await this.webhookLogRepository.create(logData);
+      }
+
+      // 6. Post-webhook lifecycle automation:
+      // - On drop/failure/cancel: immediately release any held Redis slot locks so another player can book right away
+      // - On success with NO booking yet (phone/browser crashed after UPI debit): auto-create booking or auto-refund on conflict
+      if (savedLog) {
+        if (isFailure || isDropped) {
+          await this._releaseOrderSlotLocks(savedLog);
+        } else if (isSuccess && !bookingDoc && savedLog.bookingIntent) {
+          await this._finalizePaidOrderFromIntent(savedLog, {
+            gatewayOrderId,
+            gatewayPaymentId,
+            amount: Number(resolvedAmount) || savedLog.amount || 0,
+            paymentMethod: resolvedMethod || 'upi',
+          });
+        }
       }
     } catch (logErr) {
       console.error('[Cashfree WebhookLog Error]:', logErr.message);
@@ -514,6 +533,169 @@ export class FinanceService {
       paymentId: gatewayPaymentId,
       status: webhookStatus,
     };
+  }
+
+  /**
+   * Release any Redis slot locks bound to a cancelled/dropped Cashfree order
+   */
+  async _releaseOrderSlotLocks(logDoc) {
+    if (!logDoc) return 0;
+    try {
+      const { slotService } = await import('../slots/slot.service.js');
+      let slots = logDoc.bookingIntent?.slots || [];
+      if ((!slots || slots.length === 0) && logDoc.payload?.data?.notes?.resourceId) {
+        const n = logDoc.payload.data.notes;
+        if (n.resourceId && n.date && n.startTime) {
+          slots = [{ resourceId: n.resourceId, date: n.date, startTime: n.startTime, endTime: n.endTime || '' }];
+        }
+      }
+      if (slots.length > 0 && logDoc.tenantId) {
+        const released = await slotService.releaseOrderSlots(slots, logDoc.tenantId, logDoc.gatewayOrderId);
+        if (released > 0) {
+          console.log(`[Payment Reconciler] Released ${released} held slot lock(s) for dropped/cancelled order ${logDoc.gatewayOrderId}`);
+        }
+        return released;
+      }
+    } catch (err) {
+      console.warn('[Payment Reconciler] Slot lock release warning:', err.message);
+    }
+    return 0;
+  }
+
+  /**
+   * Crash-recovery: Auto-create confirmed booking from saved bookingIntent when payment succeeded
+   * on Cashfree but the player's browser/phone crashed before calling /bookings/payment/verify.
+   * If the slot was already booked by another player after hold expiry, auto-initiates a full Cashfree refund.
+   */
+  async _finalizePaidOrderFromIntent(logDoc, { gatewayOrderId, gatewayPaymentId, amount, paymentMethod = 'upi' }) {
+    if (!logDoc?.bookingIntent || !gatewayOrderId) return null;
+    try {
+      // Idempotency: check if booking already exists for this order/payment
+      const existingBookings = await bookingRepository.model.find({
+        $or: [
+          { 'payment.cashfree_order_id': gatewayOrderId },
+          { 'payment.transactionId': gatewayOrderId },
+          ...(gatewayPaymentId ? [{ 'payment.transactionId': gatewayPaymentId }, { 'payment.cashfree_payment_id': gatewayPaymentId }] : []),
+        ],
+      });
+
+      if (existingBookings.length > 0) {
+        logDoc.bookingId = existingBookings[0]._id;
+        logDoc.status = 'success';
+        logDoc.eventType = 'PAYMENT_SUCCESS_WEBHOOK';
+        logDoc.error = null;
+        await logDoc.save();
+        return { recovered: false, alreadyExists: true, bookingId: existingBookings[0]._id };
+      }
+
+      const intent = logDoc.bookingIntent;
+      if (!intent.slots || intent.slots.length === 0 || !intent.userId) {
+        return null;
+      }
+
+      const { bookingService } = await import('../bookings/booking.service.js');
+      const payload = {
+        ...(intent.slots.length === 1
+          ? {
+              resourceId: intent.slots[0].resourceId,
+              date: intent.slots[0].date,
+              startTime: intent.slots[0].startTime,
+              endTime: intent.slots[0].endTime,
+            }
+          : { slots: intent.slots }),
+        userId: intent.userId,
+        holdId: intent.holdId || undefined,
+        notes: intent.notes || 'Auto-confirmed via Cashfree webhook (crash recovery)',
+        paymentMethod: 'cashfree',
+        cashfree_order_id: gatewayOrderId,
+        cashfree_payment_id: gatewayPaymentId || gatewayOrderId,
+        transactionId: gatewayPaymentId || gatewayOrderId,
+        _bypassHoldCheck: true,
+      };
+
+      const context = {
+        tenantId: intent.tenantId || (logDoc.tenantId ? String(logDoc.tenantId) : null),
+        branchId: intent.branchId || (logDoc.branchId ? String(logDoc.branchId) : null),
+        userId: intent.userId,
+      };
+
+      try {
+        const bookingResult = await bookingService.createBooking(payload, context);
+        const createdBookingId = bookingResult?._id || bookingResult?.bookings?.[0]?._id || null;
+        logDoc.bookingId = createdBookingId;
+        logDoc.status = 'success';
+        logDoc.eventType = 'PAYMENT_SUCCESS_WEBHOOK';
+        logDoc.error = null;
+        if (gatewayPaymentId) logDoc.gatewayPaymentId = gatewayPaymentId;
+        if (paymentMethod) logDoc.paymentMethod = paymentMethod;
+        await logDoc.save();
+        console.log(`[Payment Recovery] Auto-confirmed booking ${createdBookingId} for Cashfree order ${gatewayOrderId}`);
+        return { recovered: true, bookingId: createdBookingId };
+      } catch (bookErr) {
+        if (bookErr instanceof ConflictError) {
+          // Slot was booked by another player after hold expired — auto-refund full amount!
+          const refundAmount = Number(amount || logDoc.amount || 0);
+          let refundNote = `Slot conflict after hold expiry: ${bookErr.message}`;
+          let refundSucceeded = false;
+
+          if (refundAmount > 0) {
+            try {
+              const refundRes = await cashfreeService.initiateRefund({
+                orderId: gatewayOrderId,
+                amount: refundAmount,
+                reason: 'Slot already booked by another player — automatic full refund',
+                branchId: logDoc.branchId,
+                tenantId: logDoc.tenantId,
+              });
+              refundSucceeded = true;
+              refundNote = `Slot conflict — Automatic full refund of INR ${refundAmount} initiated (Refund ID: ${refundRes.cfRefundId || refundRes.refundId})`;
+              console.warn(`[Payment Conflict Auto-Refund] Order ${gatewayOrderId}: ${refundNote}`);
+            } catch (refundErr) {
+              refundNote = `Slot conflict — Auto-refund failed (${refundErr.message}). Manual refund required for INR ${refundAmount}.`;
+              console.error(`[Payment Conflict Auto-Refund Failed] Order ${gatewayOrderId}:`, refundErr.message);
+            }
+          }
+
+          logDoc.status = refundSucceeded ? 'refunded' : 'error';
+          logDoc.eventType = refundSucceeded ? 'CONFLICT_AUTO_REFUND' : 'CONFLICT_REFUND_FAILED';
+          logDoc.error = refundNote;
+          await logDoc.save();
+          return { recovered: false, conflict: true, refunded: refundSucceeded, note: refundNote };
+        }
+        throw bookErr;
+      }
+    } catch (err) {
+      console.error(`[Payment Recovery Error] Order ${gatewayOrderId}:`, err.message);
+      return null;
+    }
+  }
+
+  /**
+   * Start lightweight 60-second background reconciliation worker.
+   * Zero Cashfree API calls when no pending orders exist.
+   */
+  startPaymentReconciler(intervalMs = 60000) {
+    if (this._reconcilerTimer) return;
+    this._reconcilerTimer = setInterval(async () => {
+      if (this._isReconciling) return;
+      this._isReconciling = true;
+      try {
+        await this._syncPendingCashfreeLogs(null);
+      } catch (err) {
+        console.warn('[Payment Reconciler] Cycle warning:', err.message);
+      } finally {
+        this._isReconciling = false;
+      }
+    }, intervalMs);
+    console.log(`💳 [Payment Reconciler] Cashfree live status & slot-lock worker started (${Math.round(intervalMs / 1000)}s interval)`);
+  }
+
+  stopPaymentReconciler() {
+    if (this._reconcilerTimer) {
+      clearInterval(this._reconcilerTimer);
+      this._reconcilerTimer = null;
+      console.log('💳 [Payment Reconciler] Worker stopped');
+    }
   }
 
   /**
@@ -629,6 +811,19 @@ export class FinanceService {
                 payment: chosenPayment || null,
               };
               await logDoc.save();
+
+              // Release held Redis slot locks immediately on drop/fail/cancel
+              if (['dropped', 'failed', 'cancelled'].includes(nextStatus)) {
+                await this._releaseOrderSlotLocks(logDoc);
+              } else if (nextStatus === 'success' && !logDoc.bookingId && logDoc.bookingIntent) {
+                // Crash recovery: user paid on Cashfree, auto-confirm booking or auto-refund on conflict
+                await this._finalizePaidOrderFromIntent(logDoc, {
+                  gatewayOrderId: logDoc.gatewayOrderId,
+                  gatewayPaymentId: logDoc.gatewayPaymentId,
+                  amount: orderData?.order_amount || logDoc.amount,
+                  paymentMethod: logDoc.paymentMethod || 'upi',
+                });
+              }
             }
           } catch (_) {
             // Silently skip individual gateway lookup failures so report endpoint stays fast
@@ -655,6 +850,7 @@ export class FinanceService {
         existing.eventType = 'ORDER_CANCELLED';
         existing.error = reason || 'Cancelled by user';
         await existing.save();
+        await this._releaseOrderSlotLocks(existing);
       }
       return existing;
     }

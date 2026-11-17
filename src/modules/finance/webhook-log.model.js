@@ -81,6 +81,10 @@ const webhookLogSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+    bookingIntent: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
+    },
     payload: {
       type: mongoose.Schema.Types.Mixed,
       default: {},
