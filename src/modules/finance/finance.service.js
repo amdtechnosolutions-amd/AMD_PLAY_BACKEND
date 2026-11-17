@@ -233,19 +233,52 @@ export class FinanceService {
   }
 
   async processCashfreeWebhook(event, signature, timestamp, rawBody) {
+    const eventType = event?.type || event?.event || 'UNKNOWN';
+    const linkData = event?.data?.link_id ? event.data : null;
+    const paymentData = event?.data?.payment;
+    const orderData = event?.data?.order;
+    const customerDetails = event?.data?.customer_details || orderData?.customer_details || linkData?.customer_details || {};
+
+    const gatewayPaymentId = paymentData?.cf_payment_id
+      ? String(paymentData.cf_payment_id)
+      : (orderData?.transaction_id ? String(orderData.transaction_id) : '');
+
+    const gatewayOrderId = orderData?.order_id || (linkData ? String(linkData.link_id || linkData.cf_link_id) : '');
+    const linkId = linkData ? String(linkData.link_id || linkData.cf_link_id) : '';
+
     const isValid = await cashfreeService.verifyWebhookSignature({
       rawBody,
       timestamp,
       signature,
+      tenantId: orderData?.order_tags?.tenantId || null,
     });
 
     if (!isValid && !env.isDev && !env.isTest) {
+      let fallbackTenantId = orderData?.order_tags?.tenantId || null;
+      if (!fallbackTenantId) {
+        try {
+          const { tenantRepository } = await import('../tenants/tenant.repository.js');
+          const defaultTenant = await tenantRepository.model.findOne({ status: 'active' }).select('_id').lean();
+          if (defaultTenant) fallbackTenantId = defaultTenant._id;
+        } catch (_) {}
+      }
       try {
         await this.webhookLogRepository.create({
+          tenantId: fallbackTenantId,
           gateway: 'cashfree',
-          eventType: event?.type || event?.event || 'UNKNOWN',
+          eventType,
+          gatewayOrderId,
+          gatewayPaymentId,
+          amount: Number(orderData?.order_amount || paymentData?.payment_amount || linkData?.link_amount || 0) || 0,
+          currency: String(orderData?.order_currency || paymentData?.payment_currency || linkData?.link_currency || 'INR').toUpperCase(),
+          paymentMethod: paymentData?.payment_group || (paymentData?.payment_method?.upi ? 'upi' : ''),
           status: 'error',
           signatureValid: false,
+          customer: {
+            name: customerDetails.customer_name || customerDetails.name || '',
+            email: customerDetails.customer_email || customerDetails.email || '',
+            phone: customerDetails.customer_phone || customerDetails.phone || '',
+          },
           error: 'Invalid Cashfree webhook signature',
           payload: event,
           headers: {
@@ -257,8 +290,6 @@ export class FinanceService {
       } catch (_) {}
       throw new ValidationError('Invalid Cashfree webhook signature');
     }
-
-    const eventType = event.type || event.event || '';
 
     // Handle dashboard test ping events
     if (eventType === 'TEST_WEBHOOK' || eventType.toUpperCase().includes('TEST')) {
@@ -289,18 +320,6 @@ export class FinanceService {
       return { processed: true, message: 'Cashfree test webhook verified successfully' };
     }
 
-    const linkData = event.data?.link_id ? event.data : null;
-    const paymentData = event.data?.payment;
-    const orderData = event.data?.order;
-    const customerDetails = event.data?.customer_details || orderData?.customer_details || linkData?.customer_details || {};
-
-    const gatewayPaymentId = paymentData?.cf_payment_id
-      ? String(paymentData.cf_payment_id)
-      : (orderData?.transaction_id ? String(orderData.transaction_id) : '');
-
-    const gatewayOrderId = orderData?.order_id || (linkData ? String(linkData.link_id || linkData.cf_link_id) : '');
-    const linkId = linkData ? String(linkData.link_id || linkData.cf_link_id) : '';
-
     if (!gatewayPaymentId && !gatewayOrderId && !linkId) {
       return { processed: true, message: 'No payment or order details found in Cashfree webhook' };
     }
@@ -311,15 +330,17 @@ export class FinanceService {
       orderData?.order_status === 'PAID' ||
       orderData?.transaction_status === 'SUCCESS';
 
+    const isDropped = eventType === 'PAYMENT_USER_DROPPED_WEBHOOK' ||
+      paymentData?.payment_status === 'USER_DROPPED';
+
     const isFailure = eventType === 'PAYMENT_FAILED_WEBHOOK' ||
-      eventType === 'PAYMENT_USER_DROPPED_WEBHOOK' ||
+      isDropped ||
       (eventType === 'PAYMENT_LINK_EVENT' && ['CANCELLED', 'EXPIRED'].includes(linkData?.link_status)) ||
       paymentData?.payment_status === 'FAILED' ||
       paymentData?.payment_status === 'CANCELLED' ||
       orderData?.transaction_status === 'FAILED';
 
     const isRefund = eventType === 'REFUND_STATUS_WEBHOOK';
-    const isDropped = eventType === 'PAYMENT_USER_DROPPED_WEBHOOK';
 
     // 1. Update Payment ledger if exists
     let payment = null;
@@ -376,7 +397,7 @@ export class FinanceService {
 
       for (const b of bookings) {
         if (isSuccess) {
-          b.payment.status = 'paid';
+          b.payment.status = 'success';
           if (gatewayPaymentId) b.payment.transactionId = gatewayPaymentId;
           b.status = 'confirmed';
           await b.save();
@@ -432,10 +453,11 @@ export class FinanceService {
     const resolvedCurrency = orderData?.order_currency || paymentData?.payment_currency || linkData?.link_currency || 'INR';
     const resolvedMethod = paymentData?.payment_group || (paymentData?.payment_method?.upi ? 'upi' : '') || payment?.paymentMethod || '';
     const webhookStatus = isSuccess ? 'success' : isDropped ? 'dropped' : isFailure ? 'failed' : isRefund ? 'refunded' : 'received';
+    const reasonMessage = (isFailure || isDropped) ? (paymentData?.payment_message || null) : null;
 
-    // 5. Persist WebhookLog
+    // 5. Persist WebhookLog (deduplicate exact gateway retries)
     try {
-      await this.webhookLogRepository.create({
+      const logData = {
         tenantId: resolvedTenantId,
         branchId: resolvedBranchId,
         gateway: 'cashfree',
@@ -459,8 +481,25 @@ export class FinanceService {
           'x-webhook-signature': signature,
           'x-webhook-timestamp': timestamp,
         },
-        receivedAt: new Date(),
-      });
+        error: reasonMessage,
+        receivedAt: event?.event_time ? new Date(event.event_time) : new Date(),
+      };
+
+      const existingLog = gatewayPaymentId
+        ? await this.webhookLogRepository.model.findOne({
+            gateway: 'cashfree',
+            eventType,
+            gatewayOrderId,
+            gatewayPaymentId,
+          })
+        : null;
+
+      if (existingLog) {
+        Object.assign(existingLog, logData);
+        await existingLog.save();
+      } else {
+        await this.webhookLogRepository.create(logData);
+      }
     } catch (logErr) {
       console.error('[Cashfree WebhookLog Error]:', logErr.message);
     }
@@ -514,10 +553,10 @@ export class FinanceService {
     if (filters.startDate || filters.endDate) {
       query.receivedAt = {};
       if (filters.startDate) {
-        query.receivedAt.$gte = new Date(filters.startDate.includes('T') ? filters.startDate : `${filters.startDate}T00:00:00.000Z`);
+        query.receivedAt.$gte = new Date(filters.startDate.includes('T') ? filters.startDate : `${filters.startDate}T00:00:00.000+05:30`);
       }
       if (filters.endDate) {
-        query.receivedAt.$lte = new Date(filters.endDate.includes('T') ? filters.endDate : `${filters.endDate}T23:59:59.999Z`);
+        query.receivedAt.$lte = new Date(filters.endDate.includes('T') ? filters.endDate : `${filters.endDate}T23:59:59.999+05:30`);
       }
     }
 
@@ -555,6 +594,12 @@ export class FinanceService {
             failedCount: {
               $sum: { $cond: [{ $in: ['$status', ['failed', 'dropped']] }, 1, 0] },
             },
+            droppedCount: {
+              $sum: { $cond: [{ $eq: ['$status', 'dropped'] }, 1, 0] },
+            },
+            errorCount: {
+              $sum: { $cond: [{ $eq: ['$status', 'error'] }, 1, 0] },
+            },
             testCount: {
               $sum: { $cond: [{ $eq: ['$status', 'test'] }, 1, 0] },
             },
@@ -577,6 +622,8 @@ export class FinanceService {
       totalAmount: 0,
       successCount: 0,
       failedCount: 0,
+      droppedCount: 0,
+      errorCount: 0,
       testCount: 0,
       refundedCount: 0,
       cashfreeCount: 0,
@@ -598,6 +645,8 @@ export class FinanceService {
         totalAmount: Number((stats.totalAmount || 0).toFixed(2)),
         successCount: stats.successCount || 0,
         failedCount: stats.failedCount || 0,
+        droppedCount: stats.droppedCount || 0,
+        errorCount: stats.errorCount || 0,
         testCount: stats.testCount || 0,
         refundedCount: stats.refundedCount || 0,
         byGateway: {

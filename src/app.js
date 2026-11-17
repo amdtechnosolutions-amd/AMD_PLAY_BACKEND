@@ -99,6 +99,10 @@ export async function buildApp(opts = {}) {
       return done(null, {});
     }
     try {
+      // Preserve exact raw JSON body string for payment gateway HMAC webhook signature verification
+      if (req.url && req.url.includes('webhook')) {
+        req.rawBody = body;
+      }
       done(null, JSON.parse(body));
     } catch (err) {
       err.statusCode = 400;

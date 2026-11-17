@@ -118,7 +118,7 @@ export class FinanceController extends BaseController {
 
   async handleRazorpayWebhook(request, reply) {
     const signature = request.headers['x-razorpay-signature'] || '';
-    const rawBody = typeof request.body === 'string' ? request.body : JSON.stringify(request.body);
+    const rawBody = request.rawBody || (typeof request.body === 'string' ? request.body : JSON.stringify(request.body));
 
     const result = await financeService.processWebhook(request.body, signature, rawBody);
 
@@ -133,7 +133,7 @@ export class FinanceController extends BaseController {
   async handleCashfreeWebhook(request, reply) {
     const signature = request.headers['x-webhook-signature'] || '';
     const timestamp = request.headers['x-webhook-timestamp'] || '';
-    const rawBody = typeof request.body === 'string' ? request.body : JSON.stringify(request.body);
+    const rawBody = request.rawBody || (typeof request.body === 'string' ? request.body : JSON.stringify(request.body));
 
     const result = await financeService.processCashfreeWebhook(request.body, signature, timestamp, rawBody);
 
