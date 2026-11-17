@@ -1456,7 +1456,7 @@ export class BookingService extends BaseService {
     }
 
     // Create confirmed booking with Cashfree payment details
-    return await this.createBooking(
+    const bookingResult = await this.createBooking(
       {
         ...data,
         paymentMethod: 'cashfree',
@@ -1466,6 +1466,27 @@ export class BookingService extends BaseService {
       },
       context
     );
+
+    // Immediately upgrade the WebhookLog for this Cashfree order to 'success'
+    try {
+      const { WebhookLog } = await import('../finance/webhook-log.model.js');
+      const bookingId = bookingResult?._id || bookingResult?.bookings?.[0]?._id || null;
+      await WebhookLog.findOneAndUpdate(
+        { gateway: 'cashfree', gatewayOrderId: orderId },
+        {
+          $set: {
+            status: 'success',
+            eventType: 'PAYMENT_SUCCESS_WEBHOOK',
+            gatewayPaymentId: paymentTxnId,
+            paymentMethod: cfVerification.paymentMethod || 'upi',
+            error: null,
+            ...(bookingId ? { bookingId } : {}),
+          },
+        }
+      );
+    } catch (_) {}
+
+    return bookingResult;
   }
 
   /**

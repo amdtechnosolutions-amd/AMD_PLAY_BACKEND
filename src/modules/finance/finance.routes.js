@@ -125,6 +125,22 @@ export default async function financeRoutes(fastify) {
     handler: financeController.getWebhookLogById.bind(financeController),
   });
 
+  fastify.post('/finance/webhooks/cancel', {
+    schema: {
+      description: 'Report a user-cancelled or closed checkout order so it appears immediately in the webhook log',
+      tags: ['Finance & Monthly Fees'],
+      body: {
+        type: 'object',
+        required: ['orderId'],
+        properties: {
+          orderId: { type: 'string' },
+          reason: { type: 'string' },
+        },
+      },
+    },
+    handler: financeController.markWebhookOrderCancelled.bind(financeController),
+  });
+
   // Monthly Coaching & Member Fee Billing
   fastify.post('/finance/monthly-fees/generate', {
     schema: {

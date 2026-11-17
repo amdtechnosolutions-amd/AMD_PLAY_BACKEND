@@ -178,7 +178,7 @@ export const queryWebhookLogsSchema = {
     type: 'object',
     properties: {
       gateway: { type: 'string', enum: ['cashfree', 'razorpay', 'stripe', 'manual', 'other'] },
-      status: { type: 'string', enum: ['success', 'failed', 'refunded', 'dropped', 'test', 'received', 'error'] },
+      status: { type: 'string', enum: ['pending', 'success', 'failed', 'cancelled', 'refunded', 'dropped', 'test', 'received', 'error'] },
       eventType: { type: 'string' },
       branchId: { type: 'string' },
       tenantId: { type: 'string' },

@@ -56,7 +56,7 @@ const webhookLogSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['success', 'failed', 'refunded', 'dropped', 'test', 'received', 'error'],
+      enum: ['pending', 'success', 'failed', 'cancelled', 'refunded', 'dropped', 'test', 'received', 'error'],
       default: 'received',
       index: true,
     },
@@ -113,3 +113,4 @@ webhookLogSchema.index({ gatewayOrderId: 1 });
 webhookLogSchema.index({ gatewayPaymentId: 1 });
 
 export const WebhookLog = mongoose.models.WebhookLog || mongoose.model('WebhookLog', webhookLogSchema);
+

@@ -485,14 +485,17 @@ export class FinanceService {
         receivedAt: event?.event_time ? new Date(event.event_time) : new Date(),
       };
 
-      const existingLog = gatewayPaymentId
-        ? await this.webhookLogRepository.model.findOne({
-            gateway: 'cashfree',
-            eventType,
-            gatewayOrderId,
-            gatewayPaymentId,
-          })
-        : null;
+      let existingLog = null;
+      if (gatewayOrderId) {
+        existingLog = await this.webhookLogRepository.model.findOne({
+          gateway: 'cashfree',
+          gatewayOrderId,
+          $or: [
+            { eventType: 'ORDER_CREATED' },
+            ...(gatewayPaymentId ? [{ eventType, gatewayPaymentId }] : [{ eventType }]),
+          ],
+        });
+      }
 
       if (existingLog) {
         Object.assign(existingLog, logData);
@@ -513,8 +516,167 @@ export class FinanceService {
     };
   }
 
+  /**
+   * Live-sync recent pending Cashfree orders against Cashfree PG API so cancelled, dropped,
+   * or newly paid orders appear immediately in the Admin Panel even before Cashfree's delayed webhook arrives.
+   */
+  async _syncPendingCashfreeLogs(rawTenantId = null) {
+    try {
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const pendingFilter = {
+        gateway: 'cashfree',
+        status: 'pending',
+        gatewayOrderId: { $ne: '' },
+        receivedAt: { $gte: since },
+      };
+      if (rawTenantId && mongoose.Types.ObjectId.isValid(rawTenantId)) {
+        pendingFilter.tenantId = new mongoose.Types.ObjectId(String(rawTenantId));
+      }
+
+      const pendingLogs = await this.webhookLogRepository.model
+        .find(pendingFilter)
+        .sort({ receivedAt: -1 })
+        .limit(5)
+        .exec();
+
+      if (!pendingLogs.length) return;
+
+      await Promise.all(
+        pendingLogs.map(async (logDoc) => {
+          try {
+            const [orderData, payments] = await Promise.all([
+              cashfreeService.getOrder(logDoc.gatewayOrderId, {
+                branchId: logDoc.branchId,
+                tenantId: logDoc.tenantId,
+              }),
+              cashfreeService.getOrderPayments(logDoc.gatewayOrderId, {
+                branchId: logDoc.branchId,
+                tenantId: logDoc.tenantId,
+              }),
+            ]);
+
+            const latestPayment = Array.isArray(payments) && payments.length > 0 ? payments[0] : null;
+            const successPayment = Array.isArray(payments)
+              ? payments.find((p) => p.payment_status === 'SUCCESS')
+              : null;
+
+            const orderStatus = String(orderData?.order_status || '').toUpperCase();
+            const paymentStatus = String(
+              (successPayment || latestPayment)?.payment_status || ''
+            ).toUpperCase();
+
+            let nextStatus = null;
+            let nextEventType = null;
+            let nextError = logDoc.error;
+
+            if (orderStatus === 'PAID' || paymentStatus === 'SUCCESS') {
+              nextStatus = 'success';
+              nextEventType = 'PAYMENT_SUCCESS_WEBHOOK';
+              nextError = null;
+            } else if (paymentStatus === 'USER_DROPPED') {
+              nextStatus = 'dropped';
+              nextEventType = 'PAYMENT_USER_DROPPED_WEBHOOK';
+              nextError = latestPayment?.payment_message || 'User dropped payment on Cashfree checkout';
+            } else if (paymentStatus === 'FAILED') {
+              nextStatus = 'failed';
+              nextEventType = 'PAYMENT_FAILED_WEBHOOK';
+              nextError = latestPayment?.payment_message || 'Payment failed';
+            } else if (
+              paymentStatus === 'CANCELLED' ||
+              orderStatus === 'EXPIRED' ||
+              orderStatus === 'TERMINATED'
+            ) {
+              nextStatus = 'cancelled';
+              nextEventType = 'ORDER_CANCELLED';
+              nextError = latestPayment?.payment_message || `Order ${orderStatus.toLowerCase()} on Cashfree`;
+            } else if (
+              orderStatus === 'ACTIVE' &&
+              (!payments || payments.length === 0) &&
+              Date.now() - new Date(logDoc.receivedAt).getTime() > 10 * 60 * 1000
+            ) {
+              // User closed/cancelled checkout without picking a payment method and slot hold expired
+              nextStatus = 'cancelled';
+              nextEventType = 'ORDER_CANCELLED';
+              nextError = 'Checkout closed / cancelled by user before payment';
+            }
+
+            if (nextStatus) {
+              const chosenPayment = successPayment || latestPayment;
+              logDoc.status = nextStatus;
+              logDoc.eventType = nextEventType;
+              logDoc.error = nextError;
+              if (chosenPayment?.cf_payment_id) {
+                logDoc.gatewayPaymentId = String(chosenPayment.cf_payment_id);
+              }
+              if (chosenPayment?.payment_group) {
+                logDoc.paymentMethod = chosenPayment.payment_group;
+              }
+              logDoc.payload = {
+                ...(logDoc.payload || {}),
+                syncedAt: new Date().toISOString(),
+                order: orderData,
+                payment: chosenPayment || null,
+              };
+              await logDoc.save();
+            }
+          } catch (_) {
+            // Silently skip individual gateway lookup failures so report endpoint stays fast
+          }
+        })
+      );
+    } catch (_) {}
+  }
+
+  async markOrderCancelled({ orderId, reason = 'Cancelled by user' }, context = {}) {
+    if (!orderId) {
+      throw new ValidationError('orderId is required');
+    }
+
+    const filter = { gatewayOrderId: String(orderId) };
+    if (context.tenantId && mongoose.Types.ObjectId.isValid(context.tenantId)) {
+      filter.tenantId = new mongoose.Types.ObjectId(String(context.tenantId));
+    }
+
+    const existing = await this.webhookLogRepository.model.findOne(filter);
+    if (existing) {
+      if (existing.status !== 'success') {
+        existing.status = 'cancelled';
+        existing.eventType = 'ORDER_CANCELLED';
+        existing.error = reason || 'Cancelled by user';
+        await existing.save();
+      }
+      return existing;
+    }
+
+    let resolvedTenantId = context.tenantId || null;
+    if (!resolvedTenantId) {
+      try {
+        const { tenantRepository } = await import('../tenants/tenant.repository.js');
+        const defaultTenant = await tenantRepository.model.findOne({ status: 'active' }).select('_id').lean();
+        if (defaultTenant) resolvedTenantId = defaultTenant._id;
+      } catch (_) {}
+    }
+
+    return await this.webhookLogRepository.create({
+      tenantId: resolvedTenantId,
+      branchId: context.branchId || null,
+      gateway: 'cashfree',
+      eventType: 'ORDER_CANCELLED',
+      gatewayOrderId: String(orderId),
+      status: 'cancelled',
+      signatureValid: true,
+      error: reason || 'Cancelled by user',
+      payload: { type: 'ORDER_CANCELLED', orderId, reason },
+      receivedAt: new Date(),
+    });
+  }
+
   async getWebhookReport(filters = {}, pagination = {}, context = {}) {
     const rawTenantId = context.tenantId || (filters.tenantId && filters.tenantId !== 'all' ? filters.tenantId : null);
+
+    // Live-sync any recent pending Cashfree orders before querying
+    await this._syncPendingCashfreeLogs(rawTenantId);
+
     const query = {};
 
     if (rawTenantId && mongoose.Types.ObjectId.isValid(rawTenantId)) {
@@ -591,11 +753,17 @@ export class FinanceService {
             successCount: {
               $sum: { $cond: [{ $eq: ['$status', 'success'] }, 1, 0] },
             },
+            pendingCount: {
+              $sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] },
+            },
             failedCount: {
-              $sum: { $cond: [{ $in: ['$status', ['failed', 'dropped']] }, 1, 0] },
+              $sum: { $cond: [{ $in: ['$status', ['failed', 'dropped', 'cancelled']] }, 1, 0] },
             },
             droppedCount: {
               $sum: { $cond: [{ $eq: ['$status', 'dropped'] }, 1, 0] },
+            },
+            cancelledCount: {
+              $sum: { $cond: [{ $eq: ['$status', 'cancelled'] }, 1, 0] },
             },
             errorCount: {
               $sum: { $cond: [{ $eq: ['$status', 'error'] }, 1, 0] },
@@ -621,8 +789,10 @@ export class FinanceService {
       total: 0,
       totalAmount: 0,
       successCount: 0,
+      pendingCount: 0,
       failedCount: 0,
       droppedCount: 0,
+      cancelledCount: 0,
       errorCount: 0,
       testCount: 0,
       refundedCount: 0,
@@ -644,8 +814,10 @@ export class FinanceService {
         total: stats.total || 0,
         totalAmount: Number((stats.totalAmount || 0).toFixed(2)),
         successCount: stats.successCount || 0,
+        pendingCount: stats.pendingCount || 0,
         failedCount: stats.failedCount || 0,
         droppedCount: stats.droppedCount || 0,
+        cancelledCount: stats.cancelledCount || 0,
         errorCount: stats.errorCount || 0,
         testCount: stats.testCount || 0,
         refundedCount: stats.refundedCount || 0,

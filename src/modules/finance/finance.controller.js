@@ -315,6 +315,19 @@ export class FinanceController extends BaseController {
       })
     );
   }
+
+  async markWebhookOrderCancelled(request, reply) {
+    const context = this._extractContext(request);
+    const { orderId, reason } = request.body || {};
+    const log = await financeService.markOrderCancelled({ orderId, reason }, context);
+
+    return reply.status(200).send(
+      apiSuccess({
+        message: 'Order marked as cancelled in webhook log',
+        data: log,
+      })
+    );
+  }
 }
 
 export const financeController = new FinanceController();

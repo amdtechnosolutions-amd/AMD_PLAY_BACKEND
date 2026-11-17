@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { Branch } from '../branches/branch.model.js';
 import { Payment } from './payment.model.js';
+import { WebhookLog } from './webhook-log.model.js';
 import { settingsService } from '../settings/settings.service.js';
 import { env } from '../../config/env.js';
 import { ValidationError } from '../../errors/AppError.js';
@@ -186,7 +187,7 @@ export class CashfreeService {
           },
           order_meta: {
             return_url: returnUrl || undefined,
-            notify_url: notifyUrl || undefined,
+            notify_url: notifyUrl || env.CASHFREE_WEBHOOK_URL || 'https://amdplayapi.amdtechno.in/api/v1/finance/webhook/cashfree',
           },
           order_note: notes.description || notes.note || (notes.resourceName ? `Booking: ${notes.resourceName}` : 'Court Booking'),
           order_tags: {
@@ -215,6 +216,58 @@ export class CashfreeService {
         console.error('[Cashfree Network Error]:', err.message);
         throw new ValidationError(`Cashfree Gateway Connection Error: ${err.message}`);
       }
+    }
+
+    // Record initial order initiation in WebhookLog so admin panel tracks every initiated / cancelled / abandoned checkout
+    try {
+      let resolvedTenantId = tenantId || null;
+      if (!resolvedTenantId) {
+        const { tenantRepository } = await import('../tenants/tenant.repository.js');
+        const defaultTenant = await tenantRepository.model.findOne({ status: 'active' }).select('_id').lean();
+        if (defaultTenant) resolvedTenantId = defaultTenant._id;
+      }
+
+      await WebhookLog.create({
+        tenantId: resolvedTenantId,
+        branchId: branchId || null,
+        gateway: 'cashfree',
+        eventType: 'ORDER_CREATED',
+        gatewayOrderId: normalizedOrderId,
+        gatewayPaymentId: '',
+        amount: orderAmount,
+        currency: String(currency || 'INR').toUpperCase(),
+        paymentMethod: '',
+        status: 'pending',
+        signatureValid: true,
+        customer: {
+          name: customerName,
+          email: customerEmail,
+          phone: customerPhone,
+        },
+        payload: {
+          type: 'ORDER_CREATED',
+          event_time: new Date().toISOString(),
+          data: {
+            order: {
+              order_id: normalizedOrderId,
+              cf_order_id: cfOrderId,
+              order_amount: orderAmount,
+              order_currency: currency,
+              order_status: orderStatus,
+            },
+            customer_details: {
+              customer_id: customerId,
+              customer_name: customerName,
+              customer_email: customerEmail,
+              customer_phone: customerPhone,
+            },
+            notes,
+          },
+        },
+        receivedAt: new Date(),
+      });
+    } catch (logErr) {
+      console.error('[Cashfree Order Log Warning]:', logErr.message);
     }
 
     const isProduction = environment === 'PRODUCTION' || environment === 'PROD';
